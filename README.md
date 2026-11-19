@@ -73,11 +73,11 @@ options:
 
 ## Documentation
 
-- [WebServices](https://github.com/ctxmc/hidrocli/wiki/webservices)
-- [Hidro Database](https://github.com/ctxmc/hidrocli/wiki/hidro-database)
-- [Client Database](https://github.com/ctxmc/hidrocli/wiki/client-database)
-- [Hidro Models](https://github.com/ctxmc/hidrocli/wiki/hidro-models)
-- [Client Models](https://github.com/ctxmc/hidrocli/wiki/client-models)
-- [Config](https://github.com/ctxmc/hidrocli/wiki/config)
-- [Jobs](https://github.com/ctxmc/hidrocli/wiki/jobs)
-- [Use Cases](https://github.com/ctxmc/hidrocli/wiki/Use-Cases)
+- [Config](https://github.com/csilab-ufop/hidrocli/wiki/config)
+- [Hidro Models](https://github.com/csilab-ufop/hidrocli/wiki/hidro-models)
+- [Client Models](https://github.com/csilab-ufop/hidrocli/wiki/client-models)
+- [Hidro Database](https://github.com/csilab-ufop/hidrocli/wiki/hidro-database)
+- [Client Database](https://github.com/csilab-ufop/hidrocli/wiki/client-database)
+- [Jobs](https://github.com/csilab-ufop/hidrocli/wiki/jobs)
+- [WebServices](https://github.com/csilab-ufop/hidrocli/wiki/webservices)
+- [Use Cases](https://github.com/csilab-ufop/hidrocli/wiki/Use-Cases)
