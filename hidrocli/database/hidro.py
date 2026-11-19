@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 from typing import List
 
+from sqlalchemy import select
+
 from hidrocli.models.hidro  import *
 
 HIDRO_DB = None
