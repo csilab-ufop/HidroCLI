@@ -217,27 +217,46 @@ def check_base_job(job_config: JobConfig.Base) -> None:
 
 def check_series_job(job_config: JobConfig) -> None:
     """Checks an JobConfig.
-    Create jobs if there is no entries and start pending jobs requisition.
+    Create missing station jobs and start pending jobs requisition.
     """
 
-    filters = create_job_filters(job_config, None, last_check=False)
-    if not count_job(job_config, filters):
-        logger.info(f"Creating jobs for {job_config}")
-        period_data = get_period(job_config).all()
-        create_series_jobs(period_data, job_config)
-        check_series_job(job_config)
+    selected    = set(STATIONS)
+    period_data = [
+        data for data in get_period(job_config).all()
+        if not selected or data[0] in selected
+    ]
+
+    if selected:
+        missing_stations = selected - {data[0] for data in period_data}
+        if missing_stations:
+            logger.warning(
+                f"No period data for stations {sorted(missing_stations)} "
+                f"in {job_config}."
+            )
+
+    existing = get_station_ids(job_config, STATIONS)
+    missing  = [data for data in period_data if data[0] not in existing]
+    if missing:
+        logger.info(f"Creating jobs for {len(missing)} stations of {job_config}")
+        create_series_jobs(missing, job_config)
+
+    update_series_job(job_config)
+    trigger_series_jobs(job_config)
+
+
+def trigger_series_jobs(job_config: JobConfig) -> None:
+    """Trigger pending and failed jobs, retrying within the same run."""
+
+    status = [JobConfig.Status.FAILED.value, JobConfig.Status.PENDING.value]
+    filters = create_job_filters(job_config, status, last_check=False,
+                                 stations=STATIONS, max_retries=True)
+    count = count_job(job_config, filters)
+    if count:
+        logger.info(f"Initiating {count} jobs for {job_config}")
+        trigger_job(job_config, filters)
+        trigger_series_jobs(job_config)
     else:
-        update_series_job(job_config)
-        status = [JobConfig.Status.FAILED.value, JobConfig.Status.PENDING.value]
-        filters = create_job_filters(job_config, status, last_check=False,
-                                     stations=STATIONS, max_retries=True)
-        count = count_job(job_config, filters)
-        if count:
-            logger.info(f"Initiating {count} jobs for {job_config}")
-            trigger_job(job_config, filters)
-            check_series_job(job_config)
-        else:
-            logger.info(f"No pending jobs for {job_config}.")
+        logger.info(f"No pending jobs for {job_config}.")
 
 
 def create_series_jobs(stations_data: List[SerieStationData], job_config: JobConfig) -> None:
@@ -338,7 +357,12 @@ def process_period(station_code, start_date, end_date, job_config):
 
 
 def update_series_job(job_config: JobConfig) -> None:
-    station_ids = get_period(job_config, only_code=True, with_null_end_date=True).scalars().all()
+    selected    = set(STATIONS)
+    station_ids = [
+        code for code in
+        get_period(job_config, only_code=True, with_null_end_date=True).scalars().all()
+        if not selected or code in selected
+    ]
     yesterday   = (datetime.now() - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     updated     = reset_series_job_dates(job_config, station_ids, yesterday, _batch_size())
     logger.trace(f"Updated {updated} stale jobs for {job_config}")

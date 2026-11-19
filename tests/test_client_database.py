@@ -215,6 +215,23 @@ def test_create_job_filters(client_db, job_name, status, last_check):
     assert len(result) == (result_len)
 
 
+def test_create_job_filters_scopes_selected_stations(client_db):
+    insert_jobs([
+        SeriesJobs(
+            HidroTable="Chuvas",
+            StationID=station,
+            FromDate=datetime(2020, 1, 1),
+            ToDate=datetime(2021, 1, 1),
+            Status=1,
+        )
+        for station in (7, 9)
+    ])
+
+    filters = create_job_filters("Chuvas", [1], False, stations=[7])
+
+    assert count_job("Chuvas", filters) == 1
+
+
 @pytest.mark.parametrize("job_type, jobs", [
     (BaseJobs, [
         BaseJobs(HidroTable="Bacia",     Status=1),
@@ -250,19 +267,6 @@ def test_count_job(client_db, job_type, jobs, request):
             assert result == 1
 
 
-@pytest.mark.parametrize("job_type, jobs", [
-    (BaseJobs, "base_jobs"),
-])
-def test_get_jobs(client_db, job_type, jobs, request):
-    jobs = request.getfixturevalue(jobs)
-    insert_jobs(jobs)
-    for job_name, status, last_check in BASE_JOB_FILTERS:
-        filters = create_job_filters(job_name, status, last_check)
-        result = get_jobs(job_name, filters)
-        if status and status[0] == 1:
-            assert len(result) == 1
-
-
 def test_iter_jobs_streams_bounded_pages(client_db):
     insert_jobs([
         BaseJobs(HidroTable="Bacia", Status=1)
@@ -282,6 +286,32 @@ def test_iter_jobs_streams_bounded_pages(client_db):
         pages.append(current)
 
     assert [len(page) for page in pages] == [10, 10, 5]
+
+
+def test_get_station_ids_filters_by_series_and_stations(client_db):
+    insert_jobs([
+        SeriesJobs(
+            HidroTable="Chuvas",
+            StationID=station,
+            FromDate=datetime(2020, 1, 1),
+            ToDate=datetime(2021, 1, 1),
+            Status=1,
+        )
+        for station in range(1, 4)
+    ])
+    insert_jobs([
+        SeriesJobs(
+            HidroTable="ResumoDescarga",
+            StationID=1,
+            FromDate=datetime(2020, 1, 1),
+            ToDate=datetime(2021, 1, 1),
+            Status=1,
+        )
+    ])
+
+    assert get_station_ids("Chuvas") == {1, 2, 3}
+    assert get_station_ids("Chuvas", [2]) == {2}
+    assert get_station_ids("ResumoDescarga") == {1}
 
 
 def test_insert_jobs_bulk_applies_series_defaults(client_db):

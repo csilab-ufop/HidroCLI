@@ -150,14 +150,19 @@ def count_job_by_status(job_name: str):
     return count_jobs
 
 
-def get_jobs(job_name: str, filters: List[elements]):
-    """ Returns all Series Jobs on Client Database, yield then in batches """
+def get_station_ids(job_name: str, stations=()) -> set:
+    """ Return the station IDs that already have a job for ``job_name``. """
 
     client_session = CLIENT_DB.get_session()
     model          = get_job_model(job_name)
-    jobs = client_session.query(model).filter(*filters).all()
+    query          = client_session.query(model.StationID).filter(
+        model.HidroTable == job_name
+    )
+    if stations:
+        query = query.filter(model.StationID.in_(stations))
+    station_ids = {row[0] for row in query.distinct()}
     client_session.close()
-    return jobs
+    return station_ids
 
 
 def insert_jobs(jobs: List[HidroJob]) -> None:
@@ -176,17 +181,6 @@ def update_jobs(jobs: List[HidroJob], job_name: str) -> None:
     client_session.bulk_update_mappings(get_job_model(job_name), jobs)
     client_session.commit()
     client_session.close()
-
-def get_lesser_year(job_name: str, station_ids):
-    client_session = CLIENT_DB.get_session()
-    lesser_results = client_session.query(SeriesJobs).filter(
-        SeriesJobs.HidroTable == job_name,
-        SeriesJobs.StationID.in_(station_ids),
-        SeriesJobs.Status != 4,
-        (func.julianday(SeriesJobs.ToDate) - func.julianday(SeriesJobs.FromDate)) < 365
-    ).distinct().all()
-    client_session.close()
-    return lesser_results
 
 
 def iter_jobs(job_name: str, filters: List[elements], chunk_size: int = 1000):

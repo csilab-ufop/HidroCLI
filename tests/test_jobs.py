@@ -283,3 +283,85 @@ def test_update_series_job_uses_bulk_reset(mock_period, mock_reset,
     assert args[0] == hidrocli.jobs.JobConfig.Series.RAIN
     assert args[1] == [1, 2, 3]
     assert args[3] == 500
+
+
+@patch('hidrocli.jobs.reset_series_job_dates', return_value=0)
+@patch('hidrocli.jobs.get_period')
+def test_update_series_job_scopes_selected_stations(mock_period, mock_reset,
+                                                    monkeypatch):
+    mock_period.return_value.scalars.return_value.all.return_value = [1, 2, 3]
+    monkeypatch.setattr(hidrocli.jobs, "STATIONS", [2, 4])
+
+    hidrocli.jobs.update_series_job(
+        hidrocli.jobs.JobConfig.Series.RAIN
+    )
+
+    assert mock_reset.call_args.args[1] == [2]
+
+
+@patch('hidrocli.jobs.update_series_job')
+@patch('hidrocli.jobs.count_job', return_value=0)
+@patch('hidrocli.jobs.trigger_job')
+@patch('hidrocli.jobs.create_series_jobs')
+@patch('hidrocli.jobs.get_station_ids')
+@patch('hidrocli.jobs.get_period')
+@pytest.mark.parametrize("stations", [
+    [1, 2, 3],
+    [],
+])
+def test_check_series_job_creates_only_missing_stations(
+        mock_period, mock_station_ids, mock_create, mock_trigger,
+        mock_count, mock_update, monkeypatch, stations):
+    mock_period.return_value.all.return_value = [
+        (1, "start", "end"),
+        (2, "start", "end"),
+        (3, "start", "end"),
+    ]
+    mock_station_ids.return_value = {1, 3}
+    monkeypatch.setattr(hidrocli.jobs, "STATIONS", stations)
+
+    hidrocli.jobs.check_series_job(
+        hidrocli.jobs.JobConfig.Series.RAIN
+    )
+
+    mock_create.assert_called_once()
+    assert [row[0] for row in mock_create.call_args.args[0]] == [2]
+    mock_station_ids.assert_any_call(
+        hidrocli.jobs.JobConfig.Series.RAIN, stations
+    )
+    mock_update.assert_called_once()
+    mock_trigger.assert_not_called()
+
+
+@patch('hidrocli.jobs.update_series_job')
+@patch('hidrocli.jobs.count_job', return_value=0)
+@patch('hidrocli.jobs.create_series_jobs')
+@patch('hidrocli.jobs.get_station_ids', return_value={1})
+@patch('hidrocli.jobs.get_period')
+def test_check_series_job_warns_for_unknown_station(
+        mock_period, mock_station_ids, mock_create, mock_count,
+        mock_update, monkeypatch, caplog):
+    mock_period.return_value.all.return_value = [(1, "start", "end")]
+    monkeypatch.setattr(hidrocli.jobs, "STATIONS", [1, 99])
+
+    hidrocli.jobs.check_series_job(
+        hidrocli.jobs.JobConfig.Series.RAIN
+    )
+
+    mock_create.assert_not_called()
+    assert "99" in caplog.text
+
+
+@patch('hidrocli.jobs.create_job_filters', return_value=[])
+@patch('hidrocli.jobs.trigger_job')
+@patch('hidrocli.jobs.count_job', side_effect=[2, 0])
+def test_trigger_series_jobs_retries_until_none(mock_count, mock_trigger,
+                                                mock_filters):
+    hidrocli.jobs.trigger_series_jobs(
+        hidrocli.jobs.JobConfig.Series.RAIN
+    )
+
+    assert mock_count.call_count == 2
+    mock_trigger.assert_called_once_with(
+        hidrocli.jobs.JobConfig.Series.RAIN, []
+    )
