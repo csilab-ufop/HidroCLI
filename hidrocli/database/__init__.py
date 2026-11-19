@@ -26,6 +26,7 @@ from sqlalchemy     import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 
 from enum import StrEnum
+from pathlib import Path
 
 class DatabaseType(StrEnum):
     """
@@ -49,9 +50,16 @@ class DatabaseConnection:
         self.engine.dispose()
 
 
+def _ensure_db_directory(db_path: str) -> None:
+    """ Create the parent directory of a database path if it is missing."""
+
+    Path(db_path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+
+
 def _setup_db(db_path, db_type) -> None:
     """ Setup an DatabaseConnection, if there is no tables, creates then"""
 
+    _ensure_db_directory(db_path)
     db = DatabaseConnection(db_path, db_type)
     match db.type:
         case DatabaseType.HIDRO:
@@ -65,6 +73,9 @@ def _setup_db(db_path, db_type) -> None:
 
 def init_db(hidro_path, client_path) -> None:
     """ Init an DatabaseConnection"""
+
+    import hidrocli.database.hidro  as hidro
+    import hidrocli.database.client as client
 
     hidro.HIDRO_DB   = _setup_db(hidro_path, DatabaseType.HIDRO)
     client.CLIENT_DB = _setup_db(client_path, DatabaseType.CLIENT)

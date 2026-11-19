@@ -57,6 +57,16 @@ def test_init_db(tmp_path):
     assert client.CLIENT_DB is not None
 
 
+def test_init_db_creates_parent_directories(tmp_path):
+    """init_db creates missing directories for the database files."""
+
+    hidro_path  = str(tmp_path / "hidro" / "hidro.db")
+    client_path = str(tmp_path / "client" / "client.db")
+    init_db(hidro_path, client_path)
+    assert (tmp_path / "hidro").is_dir()
+    assert (tmp_path / "client").is_dir()
+
+
 def test_get_session_returns_session(db_connection):
     """Test that get_session returns a valid session."""
 
