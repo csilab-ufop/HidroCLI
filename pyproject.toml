@@ -11,14 +11,15 @@ license = "BSD-2-Clause"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 authors = [{ name = "ctxmc", email = "git@thecortexmancer.org" }]
-dependencies = ["requests", "sqlalchemy"]
+dependencies = ["requests", "sqlalchemy", "alembic>=1.13"]
 
 [project.urls]
 Homepage = "https://github.com/csilab-ufop/hidrocli"
 Documentation = "https://github.com/csilab-ufop/hidrocli/wiki"
 
 [project.scripts]
-hidrocli = "hidrocli.__main__:cli"
+hidrocli     = "hidrocli.__main__:cli"
+hidro-orm    = "hidro_orm.cli:main"
 
 [project.optional-dependencies]
 dev      = ["pytest", "pytest-cov"]
@@ -26,7 +27,11 @@ release  = ["python-semantic-release"]
 examples = ["plotly", "geobr"]
 
 [tool.setuptools.packages.find]
-include = ["hidrocli", "hidrocli.*"]
+include = ["hidrocli", "hidrocli.*", "hidro_orm", "hidro_orm.*"]
+
+[tool.setuptools.package-data]
+"hidro_orm.migrations.hidro"  = ["alembic.ini", "script.py.mako"]
+"hidro_orm.migrations.client" = ["alembic.ini", "script.py.mako"]
 
 [tool.semantic_release]
 version_toml = ["pyproject.toml:project.version"]
@@ -41,9 +46,9 @@ parse_squash_commits = true
 ignore_merge_commits = true
 
 [tool.pytest.ini_options]
-testpaths        = ["tests"]
+testpaths        = ["tests", "hidrocli_docs/tests"]
 python_files     = ["test_*.py"]
 python_functions = ["test_*"]
 
 [tool.coverage.run]
-source = ["hidrocli"]
+source = ["hidrocli", "hidro_orm"]

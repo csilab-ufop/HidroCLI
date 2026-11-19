@@ -36,12 +36,14 @@ An python application tool to request and sync data from ANA Hidro WebServices.
 
 ```
 usage: hidrocli [-h] [--hidro HIDRO] [--client CLIENT]
-               [--max-workers MAX_WORKERS] [--batch-size BATCH_SIZE]
-               [--log-level {TRACE,VERBOSE,DEBUG,INFO,WARNING,ERROR}]
-               [--skip-series-jobs]
-               [--skip-for [{Chuvas,ResumoDescarga,Sedimentos,Cotas,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal} ...]]
-               [--run-for [{Chuvas,ResumoDescarga,Sedimentos,Cotas,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal} ...]]
-               [--stations [STATIONS ...]]
+                [--max-workers MAX_WORKERS] [--batch-size BATCH_SIZE]
+                [--log-level {TRACE,VERBOSE,DEBUG,INFO,WARNING,ERROR}]
+                [--skip-series-jobs]
+                [--skip-for [{Chuvas,ResumoDescarga,Sedimentos,Cotas,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal} ...]]
+                [--run-for [{Chuvas,ResumoDescarga,Sedimentos,Cotas,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal} ...]]
+                [--stations [STATIONS ...]]
+                [--filter {DATA_LEITURA,DATA_ULTIMA_ATUALIZACAO}]
+                [--save-json] [--json-dir JSON_DIR]
 
 options:
   -h, --help            show this help message and exit
@@ -61,17 +63,22 @@ options:
   --run-for [{Chuvas,ResumoDescarga,Sedimentos,Cotas,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal} ...]
                         Runs only the choosen Jobs
   --stations [STATIONS ...]
-                        Stations codes to request data
-
+                        Station codes to filter series jobs
+  --filter {DATA_LEITURA,DATA_ULTIMA_ATUALIZACAO}
+                        Date filter sent to the API (default:
+                        DATA_ULTIMA_ATUALIZACAO)
+  --save-json           Save raw JSON payloads retrieved from the API
+  --json-dir JSON_DIR   Directory where raw JSON payloads are saved
 ```
 
 ## Documentation
 
-- [WebServices](https://github.com/ctxmc/hidrocli/wiki/webservices)
-- [Hidro Database](https://github.com/ctxmc/hidrocli/wiki/hidro-database)
-- [Client Database](https://github.com/ctxmc/hidrocli/wiki/client-database)
-- [Hidro Models](https://github.com/ctxmc/hidrocli/wiki/hidro-models)
-- [Client Models](https://github.com/ctxmc/hidrocli/wiki/client-models)
-- [Config](https://github.com/ctxmc/hidrocli/wiki/config)
-- [Jobs](https://github.com/ctxmc/hidrocli/wiki/jobs)
-- [Use Cases](https://github.com/ctxmc/hidrocli/wiki/Use-Cases)
+- [Config](https://github.com/csilab-ufop/hidrocli/wiki/config)
+- [Hidro Models](https://github.com/csilab-ufop/hidrocli/wiki/hidro-models)
+- [Client Models](https://github.com/csilab-ufop/hidrocli/wiki/client-models)
+- [Hidro Database](https://github.com/csilab-ufop/hidrocli/wiki/hidro-database)
+- [Client Database](https://github.com/csilab-ufop/hidrocli/wiki/client-database)
+- [Jobs](https://github.com/csilab-ufop/hidrocli/wiki/jobs)
+- [WebServices](https://github.com/csilab-ufop/hidrocli/wiki/webservices)
+- [Database Migration](https://github.com/csilab-ufop/HidroCLI/wiki/migration)
+- [Use Cases](https://github.com/csilab-ufop/hidrocli/wiki/Use-Cases)

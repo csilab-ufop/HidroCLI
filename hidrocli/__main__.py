@@ -25,12 +25,18 @@
 def cli() -> None:
     """Setup the application and run all configured jobs."""
 
-    import hidrocli.config as config;
+    import hidrocli.config as config
+    from hidro_orm.runner import MigrationError
+
     config.setup_arguments()
     config.setup_logger()
-    config.setup_database()
 
-    import hidrocli.jobs;
+    try:
+        config.setup_database()
+    except MigrationError as exc:
+        raise SystemExit(f"[ERROR]: {exc}") from None
+
+    import hidrocli.jobs
     hidrocli.jobs.run()
 
 if __name__ == "__main__":

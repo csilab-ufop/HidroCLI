@@ -34,7 +34,7 @@ def setup_arguments():
     """ Setup command line arguments. """
 
     import argparse;
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(prog='hidrocli')
 
     parser.add_argument('--hidro', type=str, default='db/hidro.db',
                         help='Path to Hidro Database file')
