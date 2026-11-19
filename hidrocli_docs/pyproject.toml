@@ -26,7 +26,7 @@ search_path = ["../hidrocli"]
 
 [tool.pydoc-markdown.renderer]
 type = "mkdocs"
-output_directory = "../wiki"
+output_directory = "wiki"
 content_directory_name = "./"
 mkdocs_config = {site_name = "HidroCLI", repo_url  = "https://github.com/ctxmc/hidrocli"}
 

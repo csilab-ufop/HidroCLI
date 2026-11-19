@@ -60,7 +60,7 @@ def find_project_root() -> Path:
 
 ROOT = find_project_root()
 DOCS_ROOT = ROOT / "hidrocli_docs"
-WIKI_DIR = ROOT / "wiki"
+WIKI_DIR = DOCS_ROOT / "wiki"
 MODEL_FILE = ROOT / "hidrocli" / "models" / "hidro.py"
 CLIENT_MODEL_FILE = ROOT / "hidrocli" / "models" / "client.py"
 OUTPUT_FILE = WIKI_DIR / "hidro models.md"
@@ -704,7 +704,8 @@ def generate_models_page() -> None:
     """Regenerate the curated Hidro models wiki page."""
     if not OUTPUT_FILE.parent.is_dir():
         raise SystemExit(
-            "wiki directory not found; run `git submodule update --init wiki` first"
+            "wiki directory not found; run "
+            "`git submodule update --init hidrocli_docs/wiki` first"
         )
     models = read_models(MODEL_FILE)
     OUTPUT_FILE.write_text(build_page(models))
@@ -715,7 +716,8 @@ def generate_client_models_page() -> None:
     """Regenerate the curated Client models wiki page."""
     if not CLIENT_OUTPUT_FILE.parent.is_dir():
         raise SystemExit(
-            "wiki directory not found; run `git submodule update --init wiki` first"
+            "wiki directory not found; run "
+            "`git submodule update --init hidrocli_docs/wiki` first"
         )
     models = read_models(CLIENT_MODEL_FILE)
     CLIENT_OUTPUT_FILE.write_text(build_client_page(models))
