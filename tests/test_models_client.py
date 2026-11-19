@@ -22,8 +22,40 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from datetime import datetime
+
 import pytest
 from hidrocli.models.client import *
+
+
+def _series_job():
+    return SeriesJobs(
+        HidroTable="Chuvas",
+        StationID=1,
+        FromDate=datetime(2024, 1, 1),
+        ToDate=datetime(2024, 12, 31),
+        Status=1,
+    )
+
+
+def test_series_jobs_defaults_to_last_update_filter():
+    params = _series_job().to_params()
+
+    assert params["Tipo Filtro Data"] == "DATA_ULTIMA_ATUALIZACAO"
+
+
+def test_series_jobs_accepts_filter_override():
+    params = _series_job().to_params("DATA_LEITURA")
+
+    assert params["Tipo Filtro Data"] == "DATA_LEITURA"
+
+
+def test_base_and_station_jobs_ignore_filter():
+    assert BaseJobs().to_params("DATA_LEITURA") == {}
+    assert StationJobs(UF="MG").to_params("DATA_LEITURA") == {
+        "Unidade Federativa": "MG"
+    }
+
 
 def test_dummy():
     assert True

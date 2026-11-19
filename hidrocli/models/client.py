@@ -33,6 +33,9 @@ from datetime import datetime
 
 ClientBase = declarative_base()
 
+FILTERS = ("DATA_LEITURA", "DATA_ULTIMA_ATUALIZACAO")
+"""Date filters accepted by the ANA series endpoints."""
+
 class Credentials(ClientBase):
     """ Client authentication credentials.
 
@@ -121,7 +124,7 @@ class BaseJobs(HidroJob):
         yield from super().__iter__()
         yield from { "LastCheck": self.LastCheck }.items()
 
-    def to_params(self):
+    def to_params(self, filter_=None):
         """ Return the API query parameters for a base job (none). """
         return {}
 
@@ -145,7 +148,7 @@ class StationJobs(HidroJob):
             "LastCheck": self.LastCheck
         }.items()
 
-    def to_params(self):
+    def to_params(self, filter_=None):
         """ Return the API query parameters for the station job. """
         return {"Unidade Federativa": f"{self.UF}"}
 
@@ -180,11 +183,11 @@ class SeriesJobs(HidroJob):
             "Retries":   self.Retries
         }.items()
 
-    def to_params(self):
+    def to_params(self, filter_="DATA_ULTIMA_ATUALIZACAO"):
         """ Return the API query parameters for the series job. """
         return {
             "Código da Estação":         self.StationID,
-            "Tipo Filtro Data":          "DATA_LEITURA", # "DATA_ULTIMA_ATUALIZACAO"
+            "Tipo Filtro Data":          filter_,
             "Data Inicial (yyyy-MM-dd)": f"{self.FromDate.strftime('%Y-%m-%d')}",
             "Data Final (yyyy-MM-dd)":   f"{self.ToDate.strftime('%Y-%m-%d')}"
         }

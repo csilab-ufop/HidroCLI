@@ -50,6 +50,7 @@ SKIP_SERIES_JOBS = False
 SKIP_FOR         = []
 RUN_FOR          = []
 STATIONS         = []
+FILTER           = "DATA_ULTIMA_ATUALIZACAO"
 
 
 def _batch_size() -> int:
@@ -396,7 +397,7 @@ def handle_job_request(job: HidroJob, job_config: JobConfig) -> None:
     start = time.time()
     with token_lock:
         token = get_token()
-    success, items = request_job_data(job_config, token, job.to_params())
+    success, items = request_job_data(job_config, token, job.to_params(FILTER))
 
     if success:
         try:

@@ -38,6 +38,8 @@ def test_setup_arguments_defaults():
         assert hidrocli.config.HIDRO_PATH  == 'db/hidro.db'
         assert hidrocli.jobs.MAX_WORKERS   == 10
         assert hidrocli.jobs.BATCH_SIZE    == 1000
+        assert hidrocli.jobs.FILTER        == 'DATA_ULTIMA_ATUALIZACAO'
+        assert hidrocli.jobs.STATIONS      == []
 
 
 def test_setup_arguments_custum():
@@ -59,6 +61,20 @@ def test_setup_arguments_custum():
         assert hidrocli.config.HIDRO_PATH  == 'custom/hidro.db'
         assert hidrocli.jobs.MAX_WORKERS   == 5
         assert hidrocli.jobs.BATCH_SIZE    == 500
+
+
+def test_setup_arguments_filter_and_integer_stations():
+    test_arguments = ['script_name',
+                      '--stations', '111', '222',
+                      '--filter',   'DATA_LEITURA']
+
+    with patch('sys.argv', test_arguments):
+        import hidrocli.jobs
+
+        hidrocli.config.setup_arguments()
+
+        assert hidrocli.jobs.STATIONS == [111, 222]
+        assert hidrocli.jobs.FILTER   == 'DATA_LEITURA'
 
 
 def test_setup_logger_creates_custom_levels(caplog):

@@ -66,8 +66,14 @@ def setup_arguments():
                                  'CurvaDescarga', 'QualAgua', 'PerfilTransversal'],
                         help='Runs only the choosen Jobs')
 
-    parser.add_argument('--stations', default=[], nargs='*',
-                        help='Stations codes to request data')
+    parser.add_argument('--stations', default=[], nargs='*', type=int,
+                        help='Station codes to filter series jobs')
+
+    from hidrocli.models.client import FILTERS
+
+    parser.add_argument('--filter', default='DATA_ULTIMA_ATUALIZACAO',
+                        choices=FILTERS,
+                        help='Date filter sent to the API (default: DATA_ULTIMA_ATUALIZACAO)')
 
     args = parser.parse_args()
 
@@ -83,6 +89,7 @@ def setup_arguments():
     jobs.STATIONS            = args.stations
     jobs.MAX_WORKERS         = args.max_workers
     jobs.BATCH_SIZE          = args.batch_size
+    jobs.FILTER              = args.filter
 
 
 def setup_logger():
