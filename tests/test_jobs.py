@@ -28,6 +28,9 @@ from unittest.mock import patch, MagicMock
 from datetime import datetime, timedelta
 
 import hidrocli.jobs
+from hidrocli.config import setup_logger
+
+setup_logger()
 
 @patch('hidrocli.jobs.count_client')
 @patch('hidrocli.jobs.add_token')
@@ -158,3 +161,83 @@ def test_filter_repeated_series_items(job_config):
     items = hidrocli.jobs.convert_json_items(job_config, _load_json_file(job_config))
     filtered = hidrocli.jobs.filter_repeated_series_items(job_config, items)
     assert len(items) != len(filtered)
+
+
+@patch('hidrocli.jobs.process_period')
+def test_create_series_jobs_inserts_in_chunks(mock_period, monkeypatch):
+    monkeypatch.setattr(hidrocli.jobs, "MAX_WORKERS", 2)
+    monkeypatch.setattr(hidrocli.jobs, "BATCH_SIZE", 3)
+
+    def fake_period(station, start, end, job_config):
+        return [
+            hidrocli.jobs.SeriesJobs(
+                HidroTable=job_config,
+                StationID=station,
+                FromDate=datetime(2020, 1, 1),
+                ToDate=datetime(2021, 1, 1),
+                Status=1,
+            )
+            for _ in range(2)
+        ]
+
+    mock_period.side_effect = fake_period
+
+    chunks = []
+    monkeypatch.setattr(
+        hidrocli.jobs, "insert_jobs_bulk",
+        lambda jobs: chunks.append(len(jobs)),
+    )
+
+    stations = [
+        [station, "2020-01-01 00:00:00", "2021-01-01 00:00:00"]
+        for station in range(1, 6)
+    ]
+    hidrocli.jobs.create_series_jobs(
+        stations, hidrocli.jobs.JobConfig.Series.RAIN
+    )
+
+    assert sum(chunks) == 10
+    assert len(chunks) > 1
+    assert all(size <= 4 for size in chunks)
+
+
+@patch('hidrocli.jobs.count_job_by_status', return_value=[])
+@patch('hidrocli.jobs.write_queue')
+@patch('hidrocli.jobs.db_writer')
+@patch('hidrocli.jobs.handle_job_request')
+@patch('hidrocli.jobs.iter_jobs')
+def test_trigger_job_streams_jobs(mock_iter, mock_handle, mock_writer,
+                                  mock_queue, mock_count, monkeypatch):
+    mock_iter.return_value = iter([
+        MagicMock(ID=index) for index in range(20)
+    ])
+    monkeypatch.setattr(hidrocli.jobs, "MAX_WORKERS", 2)
+    monkeypatch.setattr(hidrocli.jobs, "BATCH_SIZE", 5)
+
+    hidrocli.jobs.trigger_job(
+        hidrocli.jobs.JobConfig.Series.RAIN, ["filter"]
+    )
+
+    assert mock_handle.call_count == 20
+    mock_iter.assert_called_once_with(
+        hidrocli.jobs.JobConfig.Series.RAIN, ["filter"], 5
+    )
+    mock_queue.put.assert_called_once()
+
+
+@patch('hidrocli.jobs.reset_series_job_dates', return_value=3)
+@patch('hidrocli.jobs.get_period')
+def test_update_series_job_uses_bulk_reset(mock_period, mock_reset,
+                                           monkeypatch):
+    mock_period.return_value.scalars.return_value.all.return_value = [1, 2, 3]
+    monkeypatch.setattr(hidrocli.jobs, "BATCH_SIZE", 500)
+
+    hidrocli.jobs.update_series_job(
+        hidrocli.jobs.JobConfig.Series.RAIN
+    )
+
+    mock_reset.assert_called_once()
+    args = mock_reset.call_args.args
+    assert args[0] == hidrocli.jobs.JobConfig.Series.RAIN
+    assert args[1] == [1, 2, 3]
+    assert args[3] == 500

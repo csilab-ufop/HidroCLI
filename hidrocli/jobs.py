@@ -29,7 +29,9 @@ Provides routines to request and sync data on database.
 import logging, time, json
 logger = logging.getLogger(__name__)
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import (
+    ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED,
+)
 from threading          import Thread, Lock
 from queue              import Queue
 
@@ -48,6 +50,13 @@ SKIP_SERIES_JOBS = False
 SKIP_FOR         = []
 RUN_FOR          = []
 STATIONS         = []
+
+
+def _batch_size() -> int:
+    """Return the configured write/job chunk size, with a safe default."""
+
+    return max(1, BATCH_SIZE or 1000)
+
 
 class JobConfig:
     """ Hold basic config data for jobs. """
@@ -227,21 +236,44 @@ def check_series_job(job_config: JobConfig) -> None:
 def create_series_jobs(stations_data: List[SerieStationData], job_config: JobConfig) -> None:
     """ Creates Series Jobs for each SerieStationData received for a given JobConfig.
     Preprocess all years from "Start Date" to "End Date" that will become a job request.
+    Jobs are written in bounded chunks to keep memory flat.
     """
-    start = time.time()
-    jobs = []
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [executor.submit(process_period, *data, job_config)
-                   for data in stations_data]
-        for future in as_completed(futures):
-            try:
-                processed_jobs = future.result()
-                jobs.extend(processed_jobs)
-            except Exception as e:
-                logger.error(f"Error processing period: {e}")
-    insert_jobs(jobs)
+    start      = time.time()
+    chunk_size = _batch_size()
+    workers    = max(1, MAX_WORKERS or 1)
+    batch      = []
+    created    = 0
+
+    def collect(future):
+        nonlocal created
+        try:
+            processed_jobs = future.result()
+        except Exception as e:
+            logger.error(f"Error processing period: {e}")
+            return
+        batch.extend(processed_jobs)
+        if len(batch) >= chunk_size:
+            insert_jobs_bulk(batch)
+            created += len(batch)
+            batch.clear()
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        pending = set()
+        for data in stations_data:
+            pending.add(executor.submit(process_period, *data, job_config))
+            if len(pending) >= 2 * workers:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
+                    collect(future)
+        for future in as_completed(pending):
+            collect(future)
+
+    if batch:
+        insert_jobs_bulk(batch)
+        created += len(batch)
+
     elapsed = time.time() - start
-    logger.info(f"Created {len(jobs)} jobs for {job_config} in {elapsed:.2f} seconds")
+    logger.info(f"Created {created} jobs for {job_config} in {elapsed:.2f} seconds")
 
 
 def process_period(station_code, start_date, end_date, job_config):
@@ -300,33 +332,46 @@ def process_period(station_code, start_date, end_date, job_config):
 
 def update_series_job(job_config: JobConfig) -> None:
     station_ids = get_period(job_config, only_code=True, with_null_end_date=True).scalars().all()
-    jobs = get_lesser_year(job_config, station_ids)
-    yesterday = (datetime.now() - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    for job in jobs:
-        if job.ToDate < yesterday:
-            logger.trace(f"Updating job id {job.ID} ToDate {job.ToDate} to {yesterday}")
-            job.Status = JobConfig.Status.PENDING.value
-            job.ToDate = yesterday
-        else:
-            logger.verbose(f"No updates for job id {job.ID}")
-    update_jobs(jobs, job_config)
+    yesterday   = (datetime.now() - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    updated     = reset_series_job_dates(job_config, station_ids, yesterday, _batch_size())
+    logger.trace(f"Updated {updated} stale jobs for {job_config}")
 
 
-write_queue: Queue[QueueData] = Queue()
+write_queue: Queue[QueueData] = Queue(maxsize=1000)
+
+
+def _report_future(future) -> None:
+    try:
+        future.result()
+    except Exception as e:
+        logger.error(f"[WORKER]: {e}")
+
+
 def trigger_job(job_config: JobConfig, filters) -> None:
-    """ Triggers an Thread Worker for each pending or falied job entrie in DB for a given JobConfig."""
+    """ Triggers an Thread Worker for each pending or falied job entrie in DB for a given JobConfig.
+
+    Jobs are streamed in pages and only a bounded number of futures is kept in
+    flight. The queue is bounded so slow writes apply backpressure to workers.
+    """
+
+    batch_size = _batch_size()
+    workers    = max(1, MAX_WORKERS or 1)
+    write_queue.maxsize = batch_size
 
     writer = Thread(target=db_writer, daemon=True)
     writer.start()
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [executor.submit(handle_job_request, job, job_config)
-                   for job in get_jobs(job_config, filters)]
-        for future in as_completed(futures):
-            try:
-                future.result()
-            except Exception as e:
-                logger.error(f"[WORKER]: {e}")
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        pending = set()
+        for job in iter_jobs(job_config, filters, batch_size):
+            pending.add(executor.submit(handle_job_request, job, job_config))
+            if len(pending) >= 2 * workers:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
+                    _report_future(future)
+
+        for future in as_completed(pending):
+            _report_future(future)
 
     finish_queue = QueueData(
         job_config  = job_config,
