@@ -59,6 +59,7 @@ def find_project_root() -> Path:
 
 
 ROOT = find_project_root()
+DOCS_ROOT = ROOT / "hidrocli_docs"
 WIKI_DIR = ROOT / "wiki"
 MODEL_FILE = ROOT / "hidrocli" / "models" / "hidro.py"
 CLIENT_MODEL_FILE = ROOT / "hidrocli" / "models" / "client.py"
@@ -722,15 +723,15 @@ def generate_client_models_page() -> None:
 
 
 def run_pydoc_markdown() -> None:
-    """Run pydoc-markdown from the project root."""
+    """Run pydoc-markdown from the docs project."""
     if importlib.util.find_spec("pydoc_markdown") is None:
         raise SystemExit(
             "pydoc-markdown is not installed; run "
-            "`.venv/bin/python -m pip install -e '.[dev]'`"
+            "`.venv/bin/python -m pip install -e ./hidrocli_docs`"
         )
     subprocess.run(
         [sys.executable, "-c", "from pydoc_markdown.main import cli; cli()"],
-        cwd=ROOT,
+        cwd=DOCS_ROOT,
         check=True,
     )
 

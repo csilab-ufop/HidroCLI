@@ -18,16 +18,15 @@ Homepage = "https://github.com/csilab-ufop/hidrocli"
 Documentation = "https://github.com/csilab-ufop/hidrocli/wiki"
 
 [project.scripts]
-hidrocli  = "hidrocli.__main__:cli"
-hidro-docs = "hidrocli_docs.docs:main"
+hidrocli = "hidrocli.__main__:cli"
 
 [project.optional-dependencies]
-dev      = ["pydoc-markdown", "pytest", "pytest-cov"]
+dev      = ["pytest", "pytest-cov"]
 release  = ["python-semantic-release"]
 examples = ["plotly", "geobr"]
 
 [tool.setuptools.packages.find]
-include = ["hidrocli", "hidrocli.*", "hidrocli_docs"]
+include = ["hidrocli", "hidrocli.*"]
 
 [tool.semantic_release]
 version_toml = ["pyproject.toml:project.version"]
@@ -48,53 +47,3 @@ python_functions = ["test_*"]
 
 [tool.coverage.run]
 source = ["hidrocli"]
-
-[[tool.pydoc-markdown.loaders]]
-type = "python"
-search_path = [ "./hidrocli" ]
-
-[tool.pydoc-markdown.renderer]
-type = "mkdocs"
-output_directory = "wiki"
-content_directory_name = "./"
-mkdocs_config = {site_name = "HidroCLI", repo_url  = "https://github.com/ctxmc/hidrocli"}
-
-[[tool.pydoc-markdown.renderer.pages]]
-title  = "Home"
-name   = "Home"
-source = "README.md"
-
-[[tool.pydoc-markdown.renderer.pages]]
-title    = "Jobs"
-name     = "jobs"
-contents = ['jobs.*']
-
-[[tool.pydoc-markdown.renderer.pages]]
-title    = "Client Database"
-name     = "client database"
-contents = ['database.client.*']
-
-[[tool.pydoc-markdown.renderer.pages]]
-title    = "Hidro Database"
-name     = "hidro database"
-contents = ['database.hidro.*']
-
-[[tool.pydoc-markdown.renderer.pages]]
-title    = "WebServices"
-name     = "webservices"
-contents = ['webservices.*']
-
-[[tool.pydoc-markdown.renderer.pages]]
-title    = "Config"
-name     = "config"
-contents = ['config.*']
-
-[[tool.pydoc-markdown.renderer.pages]]
-title    = "Client Models"
-name     = "client models"
-contents = ['models.client.*']
-
-[[tool.pydoc-markdown.renderer.pages]]
-title    = "Hidro Models"
-name     = "hidro models"
-contents = ['models.hidro.*']

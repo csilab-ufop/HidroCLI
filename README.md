@@ -19,7 +19,17 @@ An python application tool to request and sync data from ANA Hidro WebServices.
 
 - Setup your python enviroment and install dependencies:
 ``` shell
-    pip install .
+    pip install -e .
+```
+
+- Install the documentation tooling:
+``` shell
+    pip install -e ./hidrocli_docs
+```
+
+- Regenerate the wiki pages from the repository root:
+``` shell
+    hidro-docs
 ```
 
 ## Usage

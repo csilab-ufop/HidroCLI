@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "HidroCLI-docs"
+version = "0.0.0"
+description = "Documentation tooling for HidroCLI"
+license = "BSD-2-Clause"
+requires-python = ">=3.11"
+authors = [{ name = "ctxmc", email = "git@thecortexmancer.org" }]
+dependencies = ["pydoc-markdown"]
+
+[project.scripts]
+hidro-docs = "hidrocli_docs.docs:main"
+
+[tool.setuptools]
+packages = ["hidrocli_docs"]
+package-dir = { hidrocli_docs = "." }
+
+[tool.pydoc-markdown]
+
+[[tool.pydoc-markdown.loaders]]
+type = "python"
+search_path = ["../hidrocli"]
+
+[tool.pydoc-markdown.renderer]
+type = "mkdocs"
+output_directory = "../wiki"
+content_directory_name = "./"
+mkdocs_config = {site_name = "HidroCLI", repo_url  = "https://github.com/ctxmc/hidrocli"}
+
+[[tool.pydoc-markdown.renderer.pages]]
+title  = "Home"
+name   = "Home"
+source = "../README.md"
+
+[[tool.pydoc-markdown.renderer.pages]]
+title    = "Jobs"
+name     = "jobs"
+contents = ['jobs.*']
+
+[[tool.pydoc-markdown.renderer.pages]]
+title    = "Client Database"
+name     = "client database"
+contents = ['database.client.*']
+
+[[tool.pydoc-markdown.renderer.pages]]
+title    = "Hidro Database"
+name     = "hidro database"
+contents = ['database.hidro.*']
+
+[[tool.pydoc-markdown.renderer.pages]]
+title    = "WebServices"
+name     = "webservices"
+contents = ['webservices.*']
+
+[[tool.pydoc-markdown.renderer.pages]]
+title    = "Config"
+name     = "config"
+contents = ['config.*']
+
+[[tool.pydoc-markdown.renderer.pages]]
+title    = "Client Models"
+name     = "client models"
+contents = ['models.client.*']
+
+[[tool.pydoc-markdown.renderer.pages]]
+title    = "Hidro Models"
+name     = "hidro models"
+contents = ['models.hidro.*']
