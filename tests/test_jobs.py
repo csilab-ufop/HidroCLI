@@ -154,6 +154,23 @@ def test_convert_json_items(job_config):
                 assert isinstance(item["codigoestacao"], int)
 
 
+def test_convert_json_items_parses_all_supported_formats():
+    items = hidrocli.jobs.convert_json_items(
+        hidrocli.jobs.JobConfig.Series.RAIN,
+        [
+            {"Data": "2024-01-02 03:04:05.123456"},
+            {"Data": "2024-01-02 03:04:05"},
+            {"Data": "2024-01-02"},
+            {"Data": "03:04:05"},
+        ],
+    )
+
+    assert items[0]["Data"] == datetime(2024, 1, 2, 3, 4, 5, 123456)
+    assert items[1]["Data"] == datetime(2024, 1, 2, 3, 4, 5)
+    assert items[2]["Data"] == datetime(2024, 1, 2)
+    assert items[3]["Data"].time() == datetime(1900, 1, 1, 3, 4, 5).time()
+
+
 @pytest.mark.parametrize("job_config", [
     hidrocli.jobs.JobConfig.Series.RAIN,
 ])

@@ -734,28 +734,21 @@ def convert_json_items(job_config, items):
     if isinstance(items, dict):
         items = [items]
 
+    formats = ["%Y-%m-%d %H:%M:%S.%f",
+               "%Y-%m-%d %H:%M:%S",
+               "%Y-%m-%d", "%H:%M:%S"]
     for item in items:
         for key, value in item.items():
             if isinstance(value, str):
                 try:
                     item[key] = json.loads(value)
                 except (json.JSONDecodeError, ValueError):
-                    match job_config:
-                        case JobConfig.Series.GRANULOMETRY:
-                            formats = ["%Y-%m-%d %H:%M:%S.%f",
-                                       "%Y-%m-%d %H:%M:%S",
-                                       "%Y-%m-%d", "%H:%M:%S"]
-                            for fmt in formats:
-                                try:
-                                    item[key] = datetime.strptime(value, fmt)
-                                    break
-                                except Exception as e:
-                                    continue
-                        case _:
-                            try:
-                                item[key] = datetime.strptime(value, "%Y-%m-%d %H:%M:%S.%f")
-                            except ValueError:
-                                pass
+                    for fmt in formats:
+                        try:
+                            item[key] = datetime.strptime(value, fmt)
+                            break
+                        except ValueError:
+                            continue
     return items
 
 
