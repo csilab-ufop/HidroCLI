@@ -187,3 +187,132 @@ def get_lesser_year(job_name: str, station_ids):
     ).distinct().all()
     client_session.close()
     return lesser_results
+
+
+def iter_jobs(job_name: str, filters: List[elements], chunk_size: int = 1000):
+    """Yield jobs in bounded keyset pages.
+
+    Only ``chunk_size`` ORM instances are alive at a time, so scheduling a
+    table with millions of rows no longer hydrates the whole queue. Instances
+    are detached before the session closes so callers can enqueue and mutate
+    them safely.
+    """
+
+    model      = get_job_model(job_name)
+    chunk_size = max(1, chunk_size)
+    last_id    = 0
+
+    while True:
+        client_session = CLIENT_DB.get_session()
+        try:
+            chunk = (
+                client_session.query(model)
+                .filter(*filters, model.ID > last_id)
+                .order_by(model.ID)
+                .limit(chunk_size)
+                .all()
+            )
+            for job in chunk:
+                client_session.expunge(job)
+            last_id = chunk[-1].ID if chunk else 0
+        finally:
+            client_session.close()
+
+        if not chunk:
+            return
+        yield from chunk
+
+
+def job_to_mapping(job: HidroJob) -> dict:
+    """Return a bulk-insert mapping for an unsaved job instance.
+
+    Bulk mappings bypass the ORM flush, so unset columns are filled from their
+    Python-side defaults here (for example ``Retries`` and ``LastCheck``).
+    """
+
+    mapping = dict(job)
+    mapping.pop("ID", None)
+
+    for key, value in list(mapping.items()):
+        if value is not None:
+            continue
+        column  = job.__table__.columns.get(key)
+        default = column.default if column is not None else None
+        if default is None:
+            continue
+        mapping[key] = default.arg(None) if default.is_callable else default.arg
+    return mapping
+
+
+def insert_jobs_bulk(jobs: List[HidroJob]) -> None:
+    """Insert jobs with ORM bulk mappings, bypassing the identity map."""
+
+    if not jobs:
+        return
+    insert_job_mappings(jobs[0].HidroTable, [job_to_mapping(job) for job in jobs])
+
+
+def insert_job_mappings(job_name: str, mappings: List[dict]) -> None:
+    """Insert a chunk of job mappings without creating ORM instances."""
+
+    if not mappings:
+        return
+
+    model          = get_job_model(job_name)
+    client_session = CLIENT_DB.get_session()
+    try:
+        client_session.bulk_insert_mappings(model, mappings)
+        client_session.commit()
+    finally:
+        client_session.close()
+
+
+def update_job_mappings(job_name: str, mappings: List[dict]) -> None:
+    """Update a chunk of job mappings; every mapping needs its primary key."""
+
+    if not mappings:
+        return
+
+    model          = get_job_model(job_name)
+    client_session = CLIENT_DB.get_session()
+    try:
+        client_session.bulk_update_mappings(model, mappings)
+        client_session.commit()
+    finally:
+        client_session.close()
+
+
+def reset_series_job_dates(job_name: str, station_ids, to_date,
+                           chunk_size: int = 1000) -> int:
+    """Reset stale yearly series jobs to ``to_date`` with ORM bulk updates.
+
+    Status codes are kept as integers because importing ``jobs.JobConfig``
+    here would create a circular import.
+    """
+
+    station_ids = list(station_ids)
+    if not station_ids:
+        return 0
+
+    updated    = 0
+    chunk_size = max(1, chunk_size)
+
+    for start in range(0, len(station_ids), chunk_size):
+        chunk          = station_ids[start:start + chunk_size]
+        client_session = CLIENT_DB.get_session()
+        try:
+            updated += client_session.query(SeriesJobs).filter(
+                SeriesJobs.HidroTable == job_name,
+                SeriesJobs.StationID.in_(chunk),
+                SeriesJobs.Status != 4,
+                SeriesJobs.ToDate < to_date,
+                (func.julianday(SeriesJobs.ToDate)
+                 - func.julianday(SeriesJobs.FromDate)) < 365,
+            ).update({
+                SeriesJobs.Status: 1,
+                SeriesJobs.ToDate: to_date,
+            }, synchronize_session=False)
+            client_session.commit()
+        finally:
+            client_session.close()
+    return updated

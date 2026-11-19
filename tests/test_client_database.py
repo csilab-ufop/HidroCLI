@@ -25,6 +25,8 @@
 import pytest
 from unittest.mock import patch
 
+from datetime import datetime, timedelta
+
 from hidrocli.database        import *
 from hidrocli.database.client import *
 
@@ -259,3 +261,131 @@ def test_get_jobs(client_db, job_type, jobs, request):
         result = get_jobs(job_name, filters)
         if status and status[0] == 1:
             assert len(result) == 1
+
+
+def test_iter_jobs_streams_bounded_pages(client_db):
+    insert_jobs([
+        BaseJobs(HidroTable="Bacia", Status=1)
+        for _ in range(25)
+    ])
+
+    pages   = []
+    current = []
+    for job in iter_jobs("Bacia", [BaseJobs.HidroTable == "Bacia"],
+                         chunk_size=10):
+        assert job.ID is not None
+        current.append(job)
+        if len(current) == 10:
+            pages.append(current)
+            current = []
+    if current:
+        pages.append(current)
+
+    assert [len(page) for page in pages] == [10, 10, 5]
+
+
+def test_insert_jobs_bulk_applies_series_defaults(client_db):
+    jobs = [
+        SeriesJobs(
+            HidroTable="Chuvas",
+            StationID=station,
+            FromDate=datetime(2020, 1, 1),
+            ToDate=datetime(2021, 1, 1),
+            Status=1,
+        )
+        for station in range(1, 6)
+    ]
+
+    insert_jobs_bulk(jobs)
+
+    session = client_db.get_session()
+    try:
+        saved = session.query(SeriesJobs).order_by(SeriesJobs.StationID).all()
+        assert len(saved) == 5
+        assert all(job.ID is not None for job in saved)
+        assert all(job.Retries == 0 for job in saved)
+    finally:
+        session.close()
+
+
+def test_insert_jobs_bulk_applies_base_defaults(client_db):
+    insert_jobs_bulk([BaseJobs(HidroTable="Bacia", Status=1)])
+
+    session = client_db.get_session()
+    try:
+        saved = session.query(BaseJobs).one()
+        assert saved.LastCheck is not None
+    finally:
+        session.close()
+
+
+def test_update_job_mappings_updates_by_primary_key(client_db):
+    insert_jobs([
+        SeriesJobs(
+            HidroTable="Chuvas",
+            StationID=1,
+            FromDate=datetime(2020, 1, 1),
+            ToDate=datetime(2021, 1, 1),
+            Status=1,
+        )
+    ])
+
+    session = client_db.get_session()
+    job_id = session.query(SeriesJobs.ID).scalar()
+    session.close()
+
+    update_job_mappings("Chuvas", [{
+        "ID":      job_id,
+        "Status":  5,
+        "Retries": 3,
+    }])
+
+    session = client_db.get_session()
+    try:
+        job = session.query(SeriesJobs).filter(SeriesJobs.ID == job_id).one()
+        assert job.Status == 5
+        assert job.Retries == 3
+    finally:
+        session.close()
+
+
+def test_reset_series_job_dates_only_updates_stale(client_db):
+    yesterday = (datetime.now() - timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    insert_jobs([
+        SeriesJobs(
+            HidroTable="Chuvas", StationID=1,
+            FromDate=datetime(2020, 6, 1), ToDate=datetime(2021, 1, 1),
+            Status=5, Retries=2,
+        ),
+        SeriesJobs(
+            HidroTable="Chuvas", StationID=2,
+            FromDate=datetime.now(), ToDate=datetime.now() + timedelta(days=1),
+            Status=5, Retries=0,
+        ),
+        SeriesJobs(
+            HidroTable="Chuvas", StationID=3,
+            FromDate=datetime(2020, 6, 1), ToDate=datetime(2021, 1, 1),
+            Status=4, Retries=0,
+        ),
+    ])
+
+    updated = reset_series_job_dates(
+        "Chuvas", [1, 2, 3], yesterday, chunk_size=2
+    )
+
+    assert updated == 1
+    session = client_db.get_session()
+    try:
+        jobs = {
+            job.StationID: job
+            for job in session.query(SeriesJobs).all()
+        }
+        assert jobs[1].Status == 1
+        assert jobs[1].ToDate == yesterday
+        assert jobs[1].Retries == 2
+        assert jobs[2].Status == 5
+        assert jobs[3].Status == 4
+    finally:
+        session.close()
