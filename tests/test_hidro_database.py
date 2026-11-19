@@ -31,7 +31,10 @@ from hidrocli.config import setup_logger
 from hidrocli.database import *
 from hidrocli.database import _setup_db
 from hidrocli.database.hidro import *
-from hidrocli.models.hidro import DischargeMeasurement, Rain
+from hidrocli.jobs import JobConfig, write_data
+from hidrocli.models.hidro import (
+    DischargeMeasurement, Rain, WaterQuality, WaterQualityStatus,
+)
 
 setup_logger()
 
@@ -120,6 +123,19 @@ def test_handle_batch_update_keeps_distinct_discharge_measurements(hidro_db):
 
     insert_hidro(entries)
     assert count_hidro(DischargeMeasurement) == 2
+
+
+def test_write_data_reuses_existing_qual_agua_registro_id(hidro_db):
+    item = {
+        "codigoestacao":  1,
+        "Data_Hora_Dado": datetime(2024, 1, 1),
+    }
+
+    write_data(JobConfig.Series.WATER_QUALITY, [], [dict(item)])
+    write_data(JobConfig.Series.WATER_QUALITY, [], [dict(item)])
+
+    assert count_hidro(WaterQuality) == 1
+    assert count_hidro(WaterQualityStatus) == 1
 
 
 def test_handle_batch_update_returns_only_new_entries(hidro_db):

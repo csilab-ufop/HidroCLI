@@ -208,6 +208,29 @@ def handle_batch_update(job_name: str, items):
     return new_entries
 
 
+def get_qual_agua_ids(items):
+    """Return existing QualAgua ``(station, date) -> RegistroID`` mappings."""
+
+    if not items:
+        return {}
+
+    codes = list({item["codigoestacao"] for item in items})
+    dates = list({item["Data_Hora_Dado"] for item in items})
+
+    hidro_session = HIDRO_DB.get_session()
+    try:
+        rows = hidro_session.query(WaterQuality).filter(
+            WaterQuality.EstacaoCodigo.in_(codes),
+            WaterQuality.Data.in_(dates),
+        ).all()
+        return {
+            (row.EstacaoCodigo, row.Data): row.RegistroID
+            for row in rows
+        }
+    finally:
+        hidro_session.close()
+
+
 def get_verify_keys(name: str):
     match name:
         case ("Bacia"     | "SubBacia" | "Entidade" |

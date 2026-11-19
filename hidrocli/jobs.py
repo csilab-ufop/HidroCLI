@@ -525,15 +525,30 @@ def write_data(job_config: JobConfig, jobs: List[HidroJob], items) -> float:
                 entries = handle_batch_update(job_config, filtered_items)
                 if entries:
                     entries = insert_hidro(entries, False)
-                    entry_lookup = {}
-                    for entry in entries:
-                        key = (getattr(entry, 'EstacaoCodigo'), getattr(entry, 'Data'))
-                        entry_lookup[key] = entry
-                    for item in filtered_items:
-                        key = (item['codigoestacao'], item['Data_Hora_Dado'])
-                        if key in entry_lookup:
-                            item['Registro_ID'] = entry_lookup[key].RegistroID
-                    water_status_entries = handle_batch_update(f'{job_config}Status', filtered_items)
+
+                lookup = {
+                    (entry.EstacaoCodigo, entry.Data): entry.RegistroID
+                    for entry in entries
+                }
+                missing = [
+                    item for item in filtered_items
+                    if (item['codigoestacao'], item['Data_Hora_Dado']) not in lookup
+                ]
+                if missing:
+                    lookup.update(get_qual_agua_ids(missing))
+
+                for item in filtered_items:
+                    item['Registro_ID'] = lookup.get(
+                        (item['codigoestacao'], item['Data_Hora_Dado'])
+                    )
+
+                status_items = [
+                    item for item in filtered_items
+                    if item.get('Registro_ID') is not None
+                ]
+                if status_items:
+                    water_status_entries = handle_batch_update(
+                        f'{job_config}Status', status_items)
                     if water_status_entries:
                         insert_hidro(water_status_entries)
 
