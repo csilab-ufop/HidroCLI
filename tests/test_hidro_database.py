@@ -25,9 +25,16 @@
 import pytest
 from unittest.mock import patch
 
+from datetime import datetime
+
+from hidrocli.config import setup_logger
 from hidrocli.database import *
 from hidrocli.database import _setup_db
 from hidrocli.database.hidro import *
+from hidrocli.models.hidro import Rain
+
+setup_logger()
+
 
 @pytest.fixture
 def hidro_db(tmp_path):
@@ -39,3 +46,63 @@ def hidro_db(tmp_path):
         yield connection
         HidroBase.metadata.drop_all(connection.engine)
         connection.close()
+
+
+def test_handle_batch_update_updates_existing_rows_in_bulk(hidro_db):
+    insert_hidro([
+        Rain(EstacaoCodigo=station, Data=datetime(2024, 1, 1), Total=0.0)
+        for station in range(1, 121)
+    ])
+
+    entries = handle_batch_update(
+        "Chuvas",
+        [
+            {
+                "codigoestacao":    station,
+                "Data_Hora_Dado":   datetime(2024, 1, 1),
+                "Total":            float(station),
+            }
+            for station in range(1, 121)
+        ],
+    )
+
+    assert entries == []
+    session = hidro_db.get_session()
+    try:
+        assert session.query(Rain).filter(Rain.Total == 0.0).count() == 0
+        assert session.query(Rain).filter(Rain.Total == 120.0).count() == 1
+    finally:
+        session.close()
+
+
+def test_handle_batch_update_returns_only_new_entries(hidro_db):
+    insert_hidro([
+        Rain(EstacaoCodigo=1, Data=datetime(2024, 1, 1), Total=10.0),
+    ])
+
+    entries = handle_batch_update(
+        "Chuvas",
+        [
+            {
+                "codigoestacao":  1,
+                "Data_Hora_Dado": datetime(2024, 1, 1),
+                "Total":          42.0,
+            },
+            {
+                "codigoestacao":  2,
+                "Data_Hora_Dado": datetime(2024, 1, 1),
+                "Total":          7.0,
+            },
+        ],
+    )
+
+    assert len(entries) == 1
+    assert entries[0].EstacaoCodigo == 2
+
+    session = hidro_db.get_session()
+    try:
+        first = session.query(Rain).filter(Rain.EstacaoCodigo == 1).one()
+        assert first.Total == 42.0
+        assert session.query(Rain).count() == 1
+    finally:
+        session.close()

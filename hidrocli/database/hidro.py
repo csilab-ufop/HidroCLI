@@ -135,45 +135,76 @@ def create_period_statement(model_name, only_code: bool, with_null_end_date: boo
     return statement
 
 
+def _updated_mapping(model, item):
+    """Return bulk-update values for an existing row, excluding identity."""
+
+    mapped = model.from_json(item)
+    return {
+        column.key: getattr(mapped, column.key)
+        for column in model.__table__.columns
+        if column.key not in ("RegistroID", "DataIns")
+    }
+
+
 def handle_batch_update(job_name: str, items):
+    """Upsert ``items`` into the job's Hidro model.
+
+    Only the key columns are read for existing rows; updates are sent through
+    ORM bulk mappings and committed once per chunk. This keeps memory flat and
+    makes repeated loads actually update existing rows.
+
+    Returns the list of newly created rows (not yet inserted).
+    """
 
     hidro_session = HIDRO_DB.get_session()
-    model = get_hidro_model(job_name)
-    check_keys = get_verify_keys(job_name)
+    model         = get_hidro_model(job_name)
+    verify_keys   = get_verify_keys(job_name)
+    chunk_size    = max(1, 800 // max(1, len(verify_keys)))
+    key_columns   = [getattr(model, key) for key in verify_keys]
+    new_entries   = []
+    processed     = set()
 
-    filter_values = {}
-    for model_key, json_key in check_keys.items():
-        filter_values[model_key] = [item.get(json_key) for item in items]
+    try:
+        for start in range(0, len(items), chunk_size):
+            chunk = items[start:start + chunk_size]
 
-    query = hidro_session.query(model)
-    for model_key, values in filter_values.items():
-        attr = getattr(model, model_key)
-        query = query.filter(attr.in_(values))
+            filters = [
+                getattr(model, model_key).in_(
+                    [item.get(json_key) for item in chunk]
+                )
+                for model_key, json_key in verify_keys.items()
+            ]
+            rows = (
+                hidro_session.query(model.RegistroID, *key_columns)
+                .filter(*filters)
+                .all()
+            )
+            existing = {tuple(row[1:]): row[0] for row in rows}
 
-    existing = query.all()
+            updates = []
+            for item in chunk:
+                key = tuple(item.get(verify_keys[k]) for k in verify_keys)
+                if key in processed:
+                    continue
+                processed.add(key)
 
-    existing_map = {}
-    for e in existing:
-        key = tuple(getattr(e, k) for k in check_keys.keys())
-        existing_map[key] = e
+                row_id = existing.get(key)
+                if row_id is None:
+                    new_entries.append(model.from_json(item))
+                    continue
 
-    new_entries = []
-    for item in items:
-        key = tuple(item.get(check_keys[k]) for k in check_keys.keys())
-        entry = existing_map.get(key)
-        if entry:
-            entry.from_json(item)
-            from sqlalchemy import inspect
-            if inspect(entry).modified:
-                logger.info(f"Updated {model.__tablename__} entry code {key}.")
-                hidro_session.merge(entry)
+                mapping = _updated_mapping(model, item)
+                mapping["RegistroID"] = row_id
+                updates.append(mapping)
+
+            if updates:
+                hidro_session.bulk_update_mappings(model, updates)
                 hidro_session.commit()
-            else:
-                logger.verbose(f"No Updates for {model.__tablename__} entry code {key}.")
-        else:
-            new_entries.append(model.from_json(item))
-            logger.verbose(f"New {model.__tablename__} entry code {key}.")
-    hidro_session.close()
+                logger.verbose(
+                    f"Updated {len(updates)} {model.__tablename__} rows."
+                )
+    finally:
+        hidro_session.close()
     return new_entries
 
 
