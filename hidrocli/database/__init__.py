@@ -56,18 +56,20 @@ def _ensure_db_directory(db_path: str) -> None:
     Path(db_path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
 
 
-def _setup_db(db_path, db_type) -> None:
-    """ Setup an DatabaseConnection, if there is no tables, creates then"""
+def _setup_db(db_path, db_type) -> DatabaseConnection:
+    """ Setup a DatabaseConnection and bring its schema to the latest revision."""
 
     _ensure_db_directory(db_path)
     db = DatabaseConnection(db_path, db_type)
-    match db.type:
-        case DatabaseType.HIDRO:
-            from hidrocli.models.hidro import HidroBase
-            HidroBase.metadata.create_all(db.engine)
-        case DatabaseType.CLIENT:
-            from hidrocli.models.client import ClientBase
-            ClientBase.metadata.create_all(db.engine)
+
+    from hidro_orm.runner import upgrade_or_raise
+
+    try:
+        upgrade_or_raise(db_path, db_type.value.lower())
+    except Exception:
+        db.close()
+        raise
+
     return db
 
 
