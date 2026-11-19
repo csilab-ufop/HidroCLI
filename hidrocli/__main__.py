@@ -22,13 +22,16 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-def main() -> None:
-    import hidrocli.jobs;
-    hidrocli.jobs.run()
+def cli() -> None:
+    """Setup the application and run all configured jobs."""
 
-if __name__ == "__main__":
     import hidrocli.config as config;
     config.setup_arguments()
     config.setup_logger()
     config.setup_database()
-    main()
+
+    import hidrocli.jobs;
+    hidrocli.jobs.run()
+
+if __name__ == "__main__":
+    cli()
