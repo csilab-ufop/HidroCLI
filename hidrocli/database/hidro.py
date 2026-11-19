@@ -159,7 +159,14 @@ def handle_batch_update(job_name: str, items):
     hidro_session = HIDRO_DB.get_session()
     model         = get_hidro_model(job_name)
     verify_keys   = get_verify_keys(job_name)
-    chunk_size    = max(1, 800 // max(1, len(verify_keys)))
+
+    # SQLite allows 32,766 bound parameters per statement. Keep the key
+    # lookup below that, and cap the update mapping by column count so wide
+    # models such as QualAgua do not build oversized batches.
+    select_chunk  = max(1, 20_000 // max(1, len(verify_keys)))
+    mapping_chunk = max(1, 200_000 // max(1, len(model.__table__.columns)))
+    chunk_size    = min(select_chunk, mapping_chunk)
+
     key_columns   = [getattr(model, key) for key in verify_keys]
     new_entries   = []
     processed     = set()

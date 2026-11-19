@@ -138,6 +138,25 @@ def test_write_data_reuses_existing_qual_agua_registro_id(hidro_db):
     assert count_hidro(WaterQualityStatus) == 1
 
 
+def test_handle_batch_update_spans_multiple_chunks(hidro_db):
+    items = [
+        {
+            "codigoestacao":  station,
+            "Data_Hora_Dado": datetime(2024, 1, 1),
+            "Total":          float(station),
+        }
+        for station in range(1, 2501)
+    ]
+
+    entries = handle_batch_update("Chuvas", items)
+    assert len(entries) == 2500
+    insert_hidro(entries)
+    assert count_hidro(Rain) == 2500
+
+    assert handle_batch_update("Chuvas", items) == []
+    assert count_hidro(Rain) == 2500
+
+
 def test_handle_batch_update_returns_only_new_entries(hidro_db):
     insert_hidro([
         Rain(EstacaoCodigo=1, Data=datetime(2024, 1, 1), Total=10.0),

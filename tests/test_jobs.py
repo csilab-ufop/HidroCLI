@@ -184,6 +184,7 @@ def test_filter_repeated_series_items(job_config):
 def test_create_series_jobs_inserts_in_chunks(mock_period, monkeypatch):
     monkeypatch.setattr(hidrocli.jobs, "MAX_WORKERS", 2)
     monkeypatch.setattr(hidrocli.jobs, "BATCH_SIZE", 3)
+    monkeypatch.setattr(hidrocli.jobs, "JOB_CHUNK_SIZE", 3)
 
     def fake_period(station, start, end, job_config):
         return [

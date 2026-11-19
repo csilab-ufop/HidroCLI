@@ -55,6 +55,10 @@ SAVE_JSON        = False
 JSON_DIR         = "json"
 
 
+JOB_CHUNK_SIZE = 5000
+"""Minimum number of jobs to accumulate before one bulk insert."""
+
+
 def _batch_size() -> int:
     """Return the configured write/job chunk size, with a safe default."""
 
@@ -242,7 +246,7 @@ def create_series_jobs(stations_data: List[SerieStationData], job_config: JobCon
     Jobs are written in bounded chunks to keep memory flat.
     """
     start      = time.time()
-    chunk_size = _batch_size()
+    chunk_size = max(_batch_size(), JOB_CHUNK_SIZE)
     workers    = max(1, MAX_WORKERS or 1)
     batch      = []
     created    = 0
