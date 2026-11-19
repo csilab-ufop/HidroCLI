@@ -2,9 +2,21 @@
 
 An python application tool to request and sync data from ANA Hidro WebServices.
 
-## Setup
+## Installation
 
-- Requires [sqlite3](https://sqlite.org/index.html).
+- Requires Python 3.11+ and [sqlite3](https://sqlite.org/index.html).
+- Install directly from the repository:
+``` shell
+    pip install "git+https://github.com/csilab-ufop/hidrocli"
+```
+
+## Development
+
+- Clone the repository:
+``` shell
+    git clone https://github.com/csilab-ufop/hidrocli
+```
+
 - Setup your python enviroment and install dependencies:
 ``` shell
     pip install .
