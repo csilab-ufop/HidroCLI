@@ -1,9 +1,24 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "HidroCLI"
 version = "0.0.0"
+description = "CLI to request and sync data from the ANA Hidro WebServices"
+readme = "README.md"
+license = "BSD-2-Clause"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "ctxmc", email = "git@thecortexmancer.org" }]
 dependencies = ["requests", "sqlalchemy"]
 
+[project.urls]
+Homepage = "https://github.com/csilab-ufop/hidrocli"
+Documentation = "https://github.com/csilab-ufop/hidrocli/wiki"
+
 [project.scripts]
+hidrocli  = "hidrocli.__main__:cli"
 hidro-docs = "hidrocli_docs.docs:main"
 
 [project.optional-dependencies]
