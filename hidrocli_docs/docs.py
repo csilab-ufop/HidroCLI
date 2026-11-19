@@ -35,6 +35,7 @@ import ast
 import html
 import importlib.util
 import inspect
+import os
 import re
 import subprocess
 import sys
@@ -65,6 +66,15 @@ MODEL_FILE = ROOT / "hidrocli" / "models" / "hidro.py"
 CLIENT_MODEL_FILE = ROOT / "hidrocli" / "models" / "client.py"
 OUTPUT_FILE = WIKI_DIR / "hidro models.md"
 CLIENT_OUTPUT_FILE = WIKI_DIR / "client models.md"
+
+HELP_SNIPPETS = (
+    (ROOT / "README.md", "## Usage", (sys.executable, "-m", "hidrocli", "--help")),
+    (
+        WIKI_DIR / "migration.md",
+        "## Command overview",
+        (sys.executable, "-m", "hidro_orm.cli", "--help"),
+    ),
+)
 
 COLUMN_TYPES = {
     "BigInteger": "int",
@@ -724,6 +734,91 @@ def generate_client_models_page() -> None:
     print(f"wrote {CLIENT_OUTPUT_FILE}")
 
 
+def help_output(command: tuple[str, ...]) -> str:
+    """Run a CLI help command and return its text."""
+    env = os.environ.copy()
+    pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        str(ROOT) if not pythonpath else f"{ROOT}{os.pathsep}{pythonpath}"
+    )
+    # argparse wraps help text using COLUMNS; pin it so generated docs are stable.
+    env["COLUMNS"] = "80"
+    result = subprocess.run(
+        command,
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+        env=env,
+        text=True,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise SystemExit(
+            f"failed to generate help with {' '.join(command)}:\n{detail}"
+        )
+    return result.stdout.rstrip("\n")
+
+
+FENCE_OPEN = re.compile(r"^[ \t]*(?P<fence>`{3,}|~{3,})(?P<info>[^\n]*)$")
+FENCE_CLOSE = re.compile(r"^[ \t]*(?P<fence>`{3,}|~{3,})[ \t]*$")
+
+
+def replace_help_block(path: Path, heading: str, command: tuple[str, ...]) -> None:
+    """Replace the first fenced block under *heading* with *command* output."""
+    if not path.is_file():
+        raise SystemExit(f"{path}: help snippet file not found")
+    original = path.read_text()
+    lines = original.splitlines(keepends=True)
+
+    headings = [
+        index for index, line in enumerate(lines) if line.strip() == heading
+    ]
+    if len(headings) != 1:
+        raise SystemExit(
+            f"{path}: expected exactly one {heading!r} heading, "
+            f"found {len(headings)}"
+        )
+
+    open_index = None
+    open_fence = None
+    for index in range(headings[0] + 1, len(lines)):
+        if re.match(r"^#{1,6}\s", lines[index]):
+            break
+        match = FENCE_OPEN.match(lines[index].rstrip("\n"))
+        if match:
+            open_index = index
+            open_fence = match.group("fence")
+            break
+    if open_index is None:
+        raise SystemExit(f"{path}: no fenced block found under {heading!r}")
+
+    close_index = None
+    for index in range(open_index + 1, len(lines)):
+        match = FENCE_CLOSE.match(lines[index].rstrip("\n"))
+        if (
+            match
+            and match.group("fence")[0] == open_fence[0]
+            and len(match.group("fence")) >= len(open_fence)
+        ):
+            close_index = index
+            break
+    if close_index is None:
+        raise SystemExit(f"{path}: unterminated fenced block under {heading!r}")
+
+    output = help_output(command)
+    body = [f"{line}\n" for line in output.splitlines()]
+    updated = "".join(lines[: open_index + 1] + body + lines[close_index:])
+    if updated != original:
+        path.write_text(updated)
+        print(f"updated {path} ({heading})")
+
+
+def update_help_blocks() -> None:
+    """Refresh the CLI help snippets embedded in the documentation."""
+    for path, heading, command in HELP_SNIPPETS:
+        replace_help_block(path, heading, command)
+
+
 def run_pydoc_markdown() -> None:
     """Run pydoc-markdown from the docs project."""
     if importlib.util.find_spec("pydoc_markdown") is None:
@@ -762,7 +857,8 @@ def post_process_wiki() -> None:
 
 
 def main() -> None:
-    """Build every wiki page, then regenerate the curated model pages."""
+    """Refresh help snippets, build every wiki page, and regenerate models."""
+    update_help_blocks()
     run_pydoc_markdown()
     post_process_wiki()
     generate_models_page()
