@@ -215,10 +215,21 @@ def get_verify_keys(name: str):
             return {"Codigo": f"codigo{name.lower()}"}
         case "Estado":
             return {"Codigo": "codigouf"}
-        case ("Chuvas" | "ResumoDescarga" |
-              "Vazoes" | "Sedimentos"     | "Cotas"):
+        case ("Chuvas" | "Vazoes" | "Sedimentos" | "Cotas"):
             return {'EstacaoCodigo': 'codigoestacao',
                     'Data': 'Data_Hora_Dado'}
+        case "ResumoDescarga":
+            return {
+                'EstacaoCodigo':     'codigoestacao',
+                'Data':              'Data_Hora_Dado',
+                'NivelConsistencia': 'Nivel_Consistencia',
+                'Profundidade':      'Profundidade (m)',
+                'AreaMolhada':       'Area_Molhada (m2)',
+                'Cota':              'Cota (cm)',
+                'Largura':           'Largura (m)',
+                'Vazao':             'Vazao (m3/s)',
+                'VelMedia':          'Vel_Media (m/s)',
+            }
         case "Granulometria":
             return {'EstacaoCodigo': 'codigoestacao',
                     'Data': 'Data_Dado',

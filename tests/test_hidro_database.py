@@ -31,7 +31,7 @@ from hidrocli.config import setup_logger
 from hidrocli.database import *
 from hidrocli.database import _setup_db
 from hidrocli.database.hidro import *
-from hidrocli.models.hidro import Rain
+from hidrocli.models.hidro import DischargeMeasurement, Rain
 
 setup_logger()
 
@@ -73,6 +73,53 @@ def test_handle_batch_update_updates_existing_rows_in_bulk(hidro_db):
         assert session.query(Rain).filter(Rain.Total == 120.0).count() == 1
     finally:
         session.close()
+
+
+def test_discharge_summary_verify_keys_cover_the_measurement(hidro_db):
+    keys = get_verify_keys("ResumoDescarga")
+
+    assert set(keys) == {
+        "EstacaoCodigo", "Data", "NivelConsistencia", "Profundidade",
+        "AreaMolhada", "Cota", "Largura", "Vazao", "VelMedia",
+    }
+    assert "DataAlt" not in keys
+
+
+def test_handle_batch_update_keeps_distinct_discharge_measurements(hidro_db):
+    insert_hidro([
+        DischargeMeasurement(
+            EstacaoCodigo=1,
+            Data=datetime(2024, 1, 1),
+            NivelConsistencia=1,
+            Profundidade=1.0,
+            AreaMolhada=2.0,
+            Cota=3.0,
+            Largura=4.0,
+            Vazao=5.0,
+            VelMedia=6.0,
+        ),
+    ])
+
+    entries = handle_batch_update(
+        "ResumoDescarga",
+        [{
+            "codigoestacao":     1,
+            "Data_Hora_Dado":    datetime(2024, 1, 1),
+            "Nivel_Consistencia": 1,
+            "Profundidade (m)":  1.0,
+            "Area_Molhada (m2)": 2.0,
+            "Cota (cm)":         3.0,
+            "Largura (m)":       4.0,
+            "Vazao (m3/s)":      9.0,
+            "Vel_Media (m/s)":   6.0,
+        }],
+    )
+
+    assert len(entries) == 1
+    assert entries[0].Vazao == 9.0
+
+    insert_hidro(entries)
+    assert count_hidro(DischargeMeasurement) == 2
 
 
 def test_handle_batch_update_returns_only_new_entries(hidro_db):
