@@ -24,6 +24,18 @@
 
 import pytest
 from hidrocli.models.hidro import *
+from hidrocli.models.hidro import Granulometry
+
+
+def test_granulometry_maps_inicial_and_final_times_in_order():
+    sample = Granulometry.from_json({
+        "Hora_Inicial": "08:30:00",
+        "Hora_Final":   "09:45:00",
+    })
+
+    assert sample.HoraInicial == "08:30:00"
+    assert sample.HoraFinal   == "09:45:00"
+
 
 def test_dummy():
     assert True
