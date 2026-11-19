@@ -75,6 +75,12 @@ def setup_arguments():
                         choices=FILTERS,
                         help='Date filter sent to the API (default: DATA_ULTIMA_ATUALIZACAO)')
 
+    parser.add_argument('--save-json', action='store_true', default=False,
+                        help='Save raw JSON payloads retrieved from the API')
+
+    parser.add_argument('--json-dir', type=str, default='json',
+                        help='Directory where raw JSON payloads are saved')
+
     args = parser.parse_args()
 
     global LOG_LEVEL, HIDRO_PATH, CLIENT_PATH
@@ -90,6 +96,8 @@ def setup_arguments():
     jobs.MAX_WORKERS         = args.max_workers
     jobs.BATCH_SIZE          = args.batch_size
     jobs.FILTER              = args.filter
+    jobs.SAVE_JSON           = args.save_json
+    jobs.JSON_DIR            = args.json_dir
 
 
 def setup_logger():

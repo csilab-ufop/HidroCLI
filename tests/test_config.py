@@ -40,6 +40,8 @@ def test_setup_arguments_defaults():
         assert hidrocli.jobs.BATCH_SIZE    == 1000
         assert hidrocli.jobs.FILTER        == 'DATA_ULTIMA_ATUALIZACAO'
         assert hidrocli.jobs.STATIONS      == []
+        assert hidrocli.jobs.SAVE_JSON     is False
+        assert hidrocli.jobs.JSON_DIR      == 'json'
 
 
 def test_setup_arguments_custum():
@@ -75,6 +77,20 @@ def test_setup_arguments_filter_and_integer_stations():
 
         assert hidrocli.jobs.STATIONS == [111, 222]
         assert hidrocli.jobs.FILTER   == 'DATA_LEITURA'
+
+
+def test_setup_arguments_save_json_flags():
+    test_arguments = ['script_name',
+                      '--save-json',
+                      '--json-dir', 'custom/json']
+
+    with patch('sys.argv', test_arguments):
+        import hidrocli.jobs
+
+        hidrocli.config.setup_arguments()
+
+        assert hidrocli.jobs.SAVE_JSON is True
+        assert hidrocli.jobs.JSON_DIR  == 'custom/json'
 
 
 def test_setup_logger_creates_custom_levels(caplog):

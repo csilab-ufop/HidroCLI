@@ -22,13 +22,18 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import os
+
 import pytest
 from unittest.mock import patch, Mock
 
 import requests
 import json
 
+from hidrocli.config import setup_logger
 from hidrocli.webservices import *
+
+setup_logger()
 
 @patch('hidrocli.webservices.requests.get')
 def test_request_hidro_ws_success(mock_get):
@@ -140,3 +145,97 @@ def test_request_token_all_retries_fail(mock_sleep, mock_request):
 
     assert mock_request.call_count == 3
     assert mock_sleep.call_count   == 2
+
+
+BASE_JOBS = ["Bacia", "SubBacia", "Entidade", "Municipio", "Rio", "Estado"]
+SERIES_JOBS = ["Chuvas", "ResumoDescarga", "CurvaDescarga", "Sedimentos",
+               "QualAgua", "Cotas", "Granulometria", "PerfilTransversal",
+               "Vazoes"]
+SERIES_PARAMS = {
+    "Código da Estação":         "12345",
+    "Tipo Filtro Data":          "DATA_LEITURA",
+    "Data Inicial (yyyy-MM-dd)": "1927-05-01",
+    "Data Final (yyyy-MM-dd)":   "1928-05-01",
+}
+
+
+def test_json_file_path_base_jobs():
+    for job in BASE_JOBS:
+        assert json_file_path(job, {}, "json") == os.path.join(
+            "json", f"{job}.json"
+        )
+
+
+def test_json_file_path_estacao():
+    params = {"Unidade Federativa": "MG"}
+    assert json_file_path("Estacao", params, "json") == os.path.join(
+        "json", "Estacao", "Estacao_MG.json"
+    )
+
+
+def test_json_file_path_series_jobs():
+    expected = os.path.join(
+        "json", "{job}", "station_12345_1927-05-01_1928-05-01.json"
+    )
+    for job in SERIES_JOBS:
+        assert json_file_path(job, SERIES_PARAMS, "json") == expected.format(job=job)
+
+
+@patch('hidrocli.webservices.request_hidro_ws')
+def test_request_job_data_saves_json(mock_request, tmp_path):
+    items = [{"codigobacia": "1", "Nome_Bacia": "RIO AMAZONAS"}]
+    mock_request.return_value = {"items": items}
+
+    success, result = request_job_data("Bacia", "token", {}, str(tmp_path))
+
+    assert success is True
+    assert result == items
+    path = tmp_path / "Bacia.json"
+    assert json.loads(path.read_text()) == items
+    assert path.read_text().startswith("[\n  {")
+
+
+@patch('hidrocli.webservices.request_hidro_ws')
+def test_request_job_data_creates_series_directory(mock_request, tmp_path):
+    mock_request.return_value = {"items": [{"codigoestacao": "12345"}]}
+
+    request_job_data("Chuvas", "token", SERIES_PARAMS, str(tmp_path))
+
+    path = tmp_path / "Chuvas" / "station_12345_1927-05-01_1928-05-01.json"
+    assert path.is_file()
+    assert json.loads(path.read_text()) == [{"codigoestacao": "12345"}]
+
+
+@patch('hidrocli.webservices.request_hidro_ws')
+def test_request_job_data_saves_empty_items(mock_request, tmp_path):
+    mock_request.return_value = {"items": []}
+
+    success, items = request_job_data("Bacia", "token", {}, str(tmp_path))
+
+    assert success is True
+    assert items == []
+    assert (tmp_path / "Bacia.json").read_text().strip() == "[]"
+
+
+@patch('hidrocli.webservices.request_hidro_ws')
+def test_request_job_data_does_not_save_without_dir(mock_request, tmp_path,
+                                                    monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    mock_request.return_value = {"items": [{"codigobacia": "1"}]}
+
+    request_job_data("Bacia", "token", {})
+
+    assert list(tmp_path.iterdir()) == []
+
+
+@patch('hidrocli.webservices.save_json', side_effect=OSError("disk full"))
+@patch('hidrocli.webservices.request_hidro_ws')
+def test_request_job_data_save_failure_keeps_data(mock_request, mock_save):
+    items = [{"codigobacia": "1"}]
+    mock_request.return_value = {"items": items}
+
+    success, result = request_job_data("Bacia", "token", {}, "json")
+
+    assert success is True
+    assert result == items
+    mock_save.assert_called_once()

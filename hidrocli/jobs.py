@@ -51,6 +51,8 @@ SKIP_FOR         = []
 RUN_FOR          = []
 STATIONS         = []
 FILTER           = "DATA_ULTIMA_ATUALIZACAO"
+SAVE_JSON        = False
+JSON_DIR         = "json"
 
 
 def _batch_size() -> int:
@@ -397,7 +399,10 @@ def handle_job_request(job: HidroJob, job_config: JobConfig) -> None:
     start = time.time()
     with token_lock:
         token = get_token()
-    success, items = request_job_data(job_config, token, job.to_params(FILTER))
+    success, items = request_job_data(
+        job_config, token, job.to_params(FILTER),
+        JSON_DIR if SAVE_JSON else None,
+    )
 
     if success:
         try:

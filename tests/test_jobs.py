@@ -242,6 +242,30 @@ def test_trigger_job_streams_jobs(mock_iter, mock_handle, mock_writer,
     mock_queue.put.assert_called_once()
 
 
+@patch('hidrocli.jobs.write_queue')
+@patch('hidrocli.jobs.convert_json_items')
+@patch('hidrocli.jobs.request_job_data')
+@patch('hidrocli.jobs.get_token')
+@pytest.mark.parametrize("save_json, expected", [
+    (True,  "custom/json"),
+    (False, None),
+])
+def test_handle_job_request_passes_json_dir_when_enabled(
+        mock_token, mock_request, mock_convert, mock_queue,
+        monkeypatch, save_json, expected):
+    monkeypatch.setattr(hidrocli.jobs, "SAVE_JSON", save_json)
+    monkeypatch.setattr(hidrocli.jobs, "JSON_DIR", "custom/json")
+    mock_request.return_value = (True, [])
+    job = MagicMock()
+    job.to_params.return_value = {}
+
+    hidrocli.jobs.handle_job_request(
+        job, hidrocli.jobs.JobConfig.Base.BASIN
+    )
+
+    assert mock_request.call_args.args[3] == expected
+
+
 @patch('hidrocli.jobs.reset_series_job_dates', return_value=3)
 @patch('hidrocli.jobs.get_period')
 def test_update_series_job_uses_bulk_reset(mock_period, mock_reset,
