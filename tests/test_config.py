@@ -122,10 +122,36 @@ def test_setup_logger_none_disables_logging():
     with patch('logging.basicConfig') as mock_config:
         hidrocli.config.setup_logger()
 
-    mock_config.assert_called_once_with(
-        level=logging.CRITICAL + 1,
-        format='[%(levelname)s]: %(message)s'
+    assert mock_config.call_args.kwargs['level'] == logging.CRITICAL + 1
+
+
+def _log_formatter_record(message, level=None):
+    import logging
+    level = level or logging.INFO
+    return logging.LogRecord('test', level, __file__, 1, message, (), None)
+
+
+def test_log_formatter_moves_tag_into_prefix():
+    formatter = hidrocli.config._LogFormatter()
+    record = _log_formatter_record(
+        "[WRITER Chuvas]: Total processed Data: 100, Total finished Jobs: 1000"
     )
+
+    formatted = formatter.format(record)
+
+    assert formatted.startswith("[INFO ")
+    assert " - WRITER Chuvas]: Total processed Data: 100" in formatted
+    assert "1000" in formatted
+
+
+def test_log_formatter_keeps_untagged_message():
+    formatter = hidrocli.config._LogFormatter()
+    record = _log_formatter_record("plain message")
+
+    formatted = formatter.format(record)
+
+    assert formatted.endswith("]: plain message")
+    assert " - " not in formatted
 
 
 def test_setup_logger_creates_custom_levels(caplog):

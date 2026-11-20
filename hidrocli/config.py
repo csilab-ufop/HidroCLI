@@ -26,6 +26,9 @@
 Provides general config to HidroCLI application.
 """
 
+import logging
+import re
+
 LOG_LEVEL   = None
 HIDRO_PATH  = None
 CLIENT_PATH = None
@@ -106,18 +109,45 @@ def setup_arguments():
 
 def setup_logger():
     """ Setup logger object accross application. """
-    import logging;
     TRACE = 15
     setattr(logging.Logger, 'trace', _make_logger(TRACE))
     logging.addLevelName(TRACE, 'TRACE')
     VERBOSE = 5
     setattr(logging.Logger, 'verbose', _make_logger(VERBOSE))
     logging.addLevelName(VERBOSE, 'VERBOSE')
+    handler = logging.StreamHandler()
+    handler.setFormatter(_LogFormatter())
     level = logging.CRITICAL + 1 if LOG_LEVEL == 'NONE' else LOG_LEVEL
     logging.basicConfig(
         level=level,
-        format='[%(levelname)s]: %(message)s'
+        handlers=[handler]
     )
+
+
+class _LogFormatter(logging.Formatter):
+    """Fold a leading ``[TAG]`` from the message into the level prefix.
+
+    ``[WRITER Chuvas]: Total processed`` becomes
+    ``[INFO 2026-11-20 21:28:21 - WRITER Chuvas]: Total processed``.
+    Messages without a leading tag keep the plain prefix.
+    """
+
+    def __init__(self):
+        super().__init__(
+            fmt='[%(levelname)s %(asctime)s%(tag)s]: %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S',
+            defaults={'tag': ''}
+        )
+
+    def format(self, record):
+        message = record.getMessage()
+        match   = re.match(r'\[([^\]]+)\]:?\s(.*)', message, re.DOTALL)
+        if match:
+            record      = logging.makeLogRecord(record.__dict__)
+            record.tag  = f" - {match.group(1)}"
+            record.msg  = match.group(2)
+            record.args = ()
+        return super().format(record)
 
 
 def _make_logger(level):
