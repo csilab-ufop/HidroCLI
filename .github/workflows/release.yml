@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Semantic release
+    runs-on: ubuntu-latest
+    env:
+      # A PAT is only required if `main` is protected against pushes from
+      # GITHUB_TOKEN. Otherwise the default token is enough.
+      GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+      GIT_COMMIT_AUTHOR: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install release tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[release]"
+
+      - name: Check for existing releases
+        id: releases
+        run: |
+          if [ -z "$(git tag --list 'v*')" ]; then
+            echo "bootstrap=true" >> "$GITHUB_OUTPUT"
+            echo "has_commits=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "bootstrap=false" >> "$GITHUB_OUTPUT"
+            latest_tag="$(git tag --merged HEAD --list 'v*' --sort=-version:refname | head -n 1)"
+            if [ -n "$latest_tag" ] && [ "$(git rev-list --count "$latest_tag"..HEAD)" -eq 0 ]; then
+              echo "has_commits=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "has_commits=true" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      # Semantic Release always computes a bump from the previous tag, so it
+      # cannot produce the very first 0.0.0 release. Bootstrap it once, then
+      # let Semantic Release handle every subsequent version.
+      - name: Build distributions (initial release)
+        if: steps.releases.outputs.bootstrap == 'true'
+        run: python -m build
+
+      - name: Create initial 0.0.0 release
+        if: steps.releases.outputs.bootstrap == 'true'
+        run: |
+          gh release create v0.0.0 \
+            --target "$GITHUB_SHA" \
+            --title "v0.0.0" \
+            --notes "Initial release of HidroCLI." \
+            dist/*
+
+      - name: Create release
+        id: version
+        if: steps.releases.outputs.bootstrap == 'false' && steps.releases.outputs.has_commits == 'true'
+        run: semantic-release version
+
+      - name: Build distributions
+        if: steps.releases.outputs.bootstrap == 'false' && steps.releases.outputs.has_commits == 'true' && steps.version.outputs.released == 'true'
+        run: python -m build
+
+      - name: Upload distributions to the release
+        if: steps.releases.outputs.bootstrap == 'false' && steps.releases.outputs.has_commits == 'true' && steps.version.outputs.released == 'true'
+        run: semantic-release publish --tag "${{ steps.version.outputs.tag }}"
+
+      - name: Summary
+        if: success()
+        env:
+          BOOTSTRAP: ${{ steps.releases.outputs.bootstrap }}
+          HAS_COMMITS: ${{ steps.releases.outputs.has_commits }}
+          RELEASED: ${{ steps.version.outputs.released }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          {
+            echo "## Release"
+            if [ "$BOOTSTRAP" = "true" ]; then
+              echo "Created the initial release: \`v0.0.0\`."
+            elif [ "$HAS_COMMITS" = "false" ]; then
+              echo "No release was made: nothing has changed since the last tag."
+            elif [ "$RELEASED" = "true" ]; then
+              echo "Released \`$TAG\`."
+            else
+              echo "No release was made: there are no releasable commits since the last tag."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
