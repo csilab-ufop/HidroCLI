@@ -1,4 +1,4 @@
-# HidroCLI
+# <img src="assets/icon.png" alt="HidroCLI icon" width="64" height="64" align="absmiddle"> HidroCLI
 
 [![Release](https://github.com/csilab-ufop/hidrocli/actions/workflows/release.yml/badge.svg)](https://github.com/csilab-ufop/hidrocli/actions/workflows/release.yml)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
