@@ -458,6 +458,10 @@ def handle_job_request(job: HidroJob, job_config: JobConfig) -> None:
         match job_config:
             case JobConfig.Series():
                 job.Retries += 1
+    if success and items:
+        for item in items:
+            if isinstance(item, dict):
+                item["_JobID"] = job.ID
     elapsed = time.time() - start
     logger.verbose(f"[WORKER]: Job {job.ID} completed in {elapsed:.2f} seconds")
     queue_data = QueueData(
@@ -537,6 +541,34 @@ def db_writer() -> None:
             write_queue.task_done()
 
 
+def _record_provenance(job_config, data_table, items, data_ids=None):
+    """Store which job produced each written data row.
+
+    Items written by the API pipeline carry a private ``_JobID`` tag. The
+    helper is a no-op for direct calls without that tag, such as the
+    round-trip tests.
+    """
+
+    if not items:
+        return
+
+    if data_ids is None:
+        data_ids = get_registro_ids(str(data_table), items)
+
+    records = []
+    for item, data_id in zip(items, data_ids):
+        job_id = item.get("_JobID")
+        if job_id is None or data_id is None:
+            continue
+        records.append({
+            "JobID":     job_id,
+            "JobName":   str(job_config),
+            "DataTable": str(data_table),
+            "DataID":    data_id,
+        })
+    upsert_job_records(records)
+
+
 def write_data(job_config: JobConfig, jobs: List[HidroJob], items) -> float:
     """Insert data into DB and update the jobs as well. """
 
@@ -553,6 +585,7 @@ def write_data(job_config: JobConfig, jobs: List[HidroJob], items) -> float:
                 entries = handle_batch_update(job_config, items)
                 if entries:
                     insert_hidro(entries)
+                _record_provenance(job_config, job_config, items)
 
             case (JobConfig.Series.RAIN          | JobConfig.Series.DISCHARGE_SUMMARY |
                       JobConfig.Series.FLOW_RATE | JobConfig.Series.SEDIMENTS         |
@@ -561,11 +594,13 @@ def write_data(job_config: JobConfig, jobs: List[HidroJob], items) -> float:
                 entries = handle_batch_update(job_config, filtered_items)
                 if entries:
                     insert_hidro(entries)
+                _record_provenance(job_config, job_config, filtered_items)
 
             case JobConfig.Series.WATER_QUALITY:
                 entries = handle_batch_update(job_config, filtered_items)
                 if entries:
                     entries = insert_hidro(entries, False)
+                _record_provenance(job_config, job_config, filtered_items)
 
                 lookup = {
                     (entry.EstacaoCodigo, entry.Data): entry.RegistroID
@@ -592,15 +627,26 @@ def write_data(job_config: JobConfig, jobs: List[HidroJob], items) -> float:
                         f'{job_config}Status', status_items)
                     if water_status_entries:
                         insert_hidro(water_status_entries)
+                    _record_provenance(
+                        job_config, f'{job_config}Status', status_items)
 
             case JobConfig.Series.CROSS_SECTION:
                 entries = handle_batch_update(job_config, filtered_items)
                 if entries:
                     insert_hidro(entries, False)
-                vertical_entries = []
-                for item in items:
-                    vertical_entries.append(VerticalCrossSection.from_json(item))
-                insert_hidro(vertical_entries)
+                _record_provenance(job_config, job_config, filtered_items)
+
+                vertical_entries = [
+                    VerticalCrossSection.from_json(item) for item in items
+                ]
+                if vertical_entries:
+                    inserted = insert_hidro(vertical_entries, False)
+                    _record_provenance(
+                        job_config,
+                        "PerfilTransversalVert",
+                        items,
+                        [entry.RegistroID for entry in inserted],
+                    )
 
     if len(jobs) > 0:
         update_jobs(jobs, job_config)
@@ -743,7 +789,10 @@ def filter_repeated_series_items(job_config: JobConfig, items):
                       JobConfig.Series.SEDIMENTS):
                     key = (item['codigoestacao'], item['Data_Hora_Dado'])
                 case JobConfig.Series.DISCHARGE_SUMMARY:
-                    key = tuple(sorted((k, str(v)) for k, v in item.items()))
+                    key = tuple(sorted(
+                        (k, str(v)) for k, v in item.items()
+                        if not k.startswith("_")
+                    ))
                 case JobConfig.Series.GRANULOMETRY:
                     key = (item['codigoestacao'], item['Data_Dado'],
                            item['Hora_Inicial'], item['Hora_Final'])

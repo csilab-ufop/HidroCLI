@@ -287,6 +287,27 @@ def test_handle_job_request_passes_json_flags(
 
 
 @patch('hidrocli.jobs.write_queue')
+@patch('hidrocli.jobs.convert_json_items')
+@patch('hidrocli.jobs.request_job_data')
+@patch('hidrocli.jobs.get_token', return_value="token")
+def test_handle_job_request_tags_items_with_job_id(
+        mock_token, mock_request, mock_convert, mock_queue):
+    items = [{"codigoestacao": 1}]
+    mock_request.return_value = (True, items)
+    mock_convert.side_effect = lambda config, value: value
+    job = MagicMock()
+    job.ID = 42
+    job.to_params.return_value = {}
+
+    hidrocli.jobs.handle_job_request(
+        job, hidrocli.jobs.JobConfig.Base.BASIN
+    )
+
+    queued = mock_queue.put.call_args.args[0]
+    assert queued.items[0]["_JobID"] == 42
+
+
+@patch('hidrocli.jobs.write_queue')
 @patch('hidrocli.jobs.request_job_data',
        side_effect=PermissionError("401"))
 @patch('hidrocli.jobs.get_token', return_value="token")

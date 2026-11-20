@@ -22,14 +22,20 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from sqlalchemy     import func
-from sqlalchemy.sql import elements
+from datetime import datetime
+
+from sqlalchemy                  import func
+from sqlalchemy.dialects.sqlite  import insert as sqlite_insert
+from sqlalchemy.sql              import elements
 
 from typing import List
 
 from hidrocli.models.client import *
 
 CLIENT_DB   = None
+
+JOB_RECORD_CHUNK = 4_000
+"""Maximum mapping rows written by one SQLite upsert statement."""
 
 def count_client(model: ClientBase):
     """ Counts a given Model in Client Database. """
@@ -93,6 +99,57 @@ def update_token(RegistroID, new_token, new_expires):
     client_session.execute(update_expression)
     client_session.commit()
     client_session.close()
+
+
+def upsert_job_records(records: List[dict]) -> int:
+    """Insert or refresh the data-row mappings produced by jobs.
+
+    The unique key is ``(DataTable, DataID)``. Re-running a job updates the
+    mapping to point at the latest job instead of creating a duplicate.
+    Records without a job identifier or data identifier are ignored.
+    """
+
+    if not records:
+        return 0
+
+    now     = datetime.now()
+    pending = {}
+    for record in records:
+        job_id  = record.get("JobID")
+        data_id = record.get("DataID")
+        if job_id is None or data_id is None:
+            continue
+        key = (record["DataTable"], data_id)
+        pending[key] = {
+            "JobID":     job_id,
+            "JobName":   record["JobName"],
+            "DataTable": record["DataTable"],
+            "DataID":    data_id,
+            "DataIns":   record.get("DataIns", now),
+        }
+
+    values = list(pending.values())
+    if not values:
+        return 0
+
+    client_session = CLIENT_DB.get_session()
+    try:
+        for start in range(0, len(values), JOB_RECORD_CHUNK):
+            chunk     = values[start:start + JOB_RECORD_CHUNK]
+            statement = sqlite_insert(JobRecords).values(chunk)
+            statement = statement.on_conflict_do_update(
+                index_elements=[JobRecords.DataTable, JobRecords.DataID],
+                set_={
+                    "JobID":   statement.excluded.JobID,
+                    "JobName": statement.excluded.JobName,
+                    "DataAlt": now,
+                },
+            )
+            client_session.execute(statement)
+        client_session.commit()
+    finally:
+        client_session.close()
+    return len(values)
 
 
 def get_job_model(name: str):

@@ -215,6 +215,53 @@ def handle_batch_update(job_name: str, items):
     return new_entries
 
 
+def get_registro_ids(job_name: str, items):
+    """Return the local ``RegistroID`` for items already written to Hidro DB.
+
+    The result follows the order of ``items`` and contains ``None`` for rows
+    that could not be matched. ``PerfilTransversal`` uses the API-provided
+    identifier as its primary key, so that value is returned directly.
+    """
+
+    if not items:
+        return []
+
+    if job_name == "PerfilTransversal":
+        return [item.get("Registro_ID") for item in items]
+
+    model       = get_hidro_model(job_name)
+    verify_keys = get_verify_keys(job_name)
+    json_keys   = list(verify_keys.values())
+    key_columns = [getattr(model, key) for key in verify_keys]
+
+    select_chunk = max(1, 20_000 // max(1, len(json_keys)))
+    found        = {}
+
+    hidro_session = HIDRO_DB.get_session()
+    try:
+        for start in range(0, len(items), select_chunk):
+            chunk   = items[start:start + select_chunk]
+            filters = [
+                getattr(model, model_key).in_(
+                    [item.get(json_key) for item in chunk]
+                )
+                for model_key, json_key in verify_keys.items()
+            ]
+            rows = (
+                hidro_session.query(model.RegistroID, *key_columns)
+                .filter(*filters)
+                .all()
+            )
+            found.update({tuple(row[1:]): row[0] for row in rows})
+    finally:
+        hidro_session.close()
+
+    return [
+        found.get(tuple(item.get(json_key) for json_key in json_keys))
+        for item in items
+    ]
+
+
 def get_qual_agua_ids(items):
     """Return existing QualAgua ``(station, date) -> RegistroID`` mappings."""
 

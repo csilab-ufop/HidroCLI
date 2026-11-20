@@ -26,7 +26,7 @@
 from sqlalchemy import (
     Column, Integer, String,
     DateTime, ForeignKey, BigInteger,
-    SmallInteger
+    SmallInteger, Float, UniqueConstraint, Index
 )
 from sqlalchemy.orm import declarative_base
 from datetime import datetime
@@ -191,3 +191,40 @@ class SeriesJobs(HidroJob):
             "Data Inicial (yyyy-MM-dd)": f"{self.FromDate.strftime('%Y-%m-%d')}",
             "Data Final (yyyy-MM-dd)":   f"{self.ToDate.strftime('%Y-%m-%d')}"
         }
+
+
+class JobRecords(ClientBase):
+    """ Map a job to the Hidro data rows it produced.
+
+    Jobs and Hidro data live in separate databases, so the job and data
+    identifiers are plain integers without database-enforced foreign keys.
+    One row is kept per data record and is updated to the latest job that
+    inserted or refreshed it.
+    """
+
+    __tablename__ = 'JobRecords'
+    __table_args__ = (
+        UniqueConstraint('DataTable', 'DataID', name='uq_job_records_data'),
+        Index('ix_job_records_job', 'JobName', 'JobID'),
+    )
+
+    RegistroID = Column(Integer, primary_key=True, autoincrement=True)
+    """ int: unique mapping identifier. """
+
+    JobID      = Column(Integer, nullable=False)
+    """ int: identifier of the job in ``JobName``'s job table. """
+
+    JobName    = Column(String, nullable=False)
+    """ string: job name, used to resolve BaseJobs, StationJobs or SeriesJobs. """
+
+    DataTable  = Column(String, nullable=False)
+    """ string: Hidro table that contains the returned data. """
+
+    DataID     = Column(Float, nullable=False)
+    """ float: local RegistroID of the returned row (float for PerfilTransversal). """
+
+    DataIns    = Column(DateTime, default=datetime.now)
+    """ datetime: date the mapping was first created. """
+
+    DataAlt    = Column(DateTime)
+    """ datetime: date the mapping last changed to another job. """
