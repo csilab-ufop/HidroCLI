@@ -41,6 +41,7 @@ def test_setup_arguments_defaults():
         assert hidrocli.jobs.FILTER        == 'DATA_ULTIMA_ATUALIZACAO'
         assert hidrocli.jobs.STATIONS      == []
         assert hidrocli.jobs.SAVE_JSON     is False
+        assert hidrocli.jobs.READ_JSON     is False
         assert hidrocli.jobs.JSON_DIR      == 'json'
 
 
@@ -90,6 +91,20 @@ def test_setup_arguments_save_json_flags():
         hidrocli.config.setup_arguments()
 
         assert hidrocli.jobs.SAVE_JSON is True
+        assert hidrocli.jobs.JSON_DIR  == 'custom/json'
+
+
+def test_setup_arguments_read_json_flag():
+    test_arguments = ['script_name',
+                      '--read-json',
+                      '--json-dir', 'custom/json']
+
+    with patch('sys.argv', test_arguments):
+        import hidrocli.jobs
+
+        hidrocli.config.setup_arguments()
+
+        assert hidrocli.jobs.READ_JSON is True
         assert hidrocli.jobs.JSON_DIR  == 'custom/json'
 
 

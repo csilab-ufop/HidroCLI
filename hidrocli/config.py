@@ -78,8 +78,11 @@ def setup_arguments():
     parser.add_argument('--save-json', action='store_true', default=False,
                         help='Save raw JSON payloads retrieved from the API')
 
+    parser.add_argument('--read-json', action='store_true', default=False,
+                        help='Read raw JSON payloads from the JSON directory before requesting the API')
+
     parser.add_argument('--json-dir', type=str, default='json',
-                        help='Directory where raw JSON payloads are saved')
+                        help='Directory where raw JSON payloads are read from and saved')
 
     args = parser.parse_args()
 
@@ -97,6 +100,7 @@ def setup_arguments():
     jobs.BATCH_SIZE          = args.batch_size
     jobs.FILTER              = args.filter
     jobs.SAVE_JSON           = args.save_json
+    jobs.READ_JSON           = args.read_json
     jobs.JSON_DIR            = args.json_dir
 
 

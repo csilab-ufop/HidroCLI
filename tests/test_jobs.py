@@ -248,10 +248,12 @@ def test_trigger_job_streams_jobs(mock_iter, mock_handle, mock_writer,
 @patch('hidrocli.jobs.request_job_data')
 @patch('hidrocli.jobs.get_token')
 @pytest.mark.parametrize("save_json", [True, False])
-def test_handle_job_request_passes_save_flags(
+@pytest.mark.parametrize("read_json", [True, False])
+def test_handle_job_request_passes_json_flags(
         mock_token, mock_request, mock_convert, mock_queue,
-        monkeypatch, save_json):
+        monkeypatch, save_json, read_json):
     monkeypatch.setattr(hidrocli.jobs, "SAVE_JSON", save_json)
+    monkeypatch.setattr(hidrocli.jobs, "READ_JSON", read_json)
     monkeypatch.setattr(hidrocli.jobs, "JSON_DIR", "custom/json")
     mock_request.return_value = (True, [])
     job = MagicMock()
@@ -264,6 +266,7 @@ def test_handle_job_request_passes_save_flags(
     assert mock_request.call_args.kwargs == {
         "save_json": save_json,
         "json_dir":  "custom/json",
+        "read_json": read_json,
     }
 
 

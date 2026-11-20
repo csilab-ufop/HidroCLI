@@ -101,12 +101,25 @@ def request_token(client_id: str, client_password: str, max_retries=3, retry_del
 
 def request_job_data(job_name: str, token: str, params: dict,
                      save_json: bool = False,
-                     json_dir: str = "json") -> (bool, dict):
+                     json_dir: str = "json",
+                     read_json: bool = False) -> (bool, dict):
     """ Request data to ANA API and returns it.
 
-    When ``save_json`` is true, the returned items are also written under
-    ``json_dir`` following :func:`json_file_path`.
+    When ``read_json`` is true, a payload previously saved under ``json_dir``
+    is returned without contacting the API. Missing or unreadable payloads
+    fall back to the API.
+
+    When ``save_json`` is true, payloads fetched from the API are also written
+    under ``json_dir`` following :func:`json_file_path`.
     """
+
+    if read_json:
+        try:
+            return (True, load_response(job_name, params, json_dir))
+        except FileNotFoundError:
+            logger.verbose(f"[REQUEST_DATA]: (load): {job_name}: not found, requesting from API")
+        except Exception as e:
+            logger.warning(f"[REQUEST_DATA]: (load): {job_name}: {e}, requesting from API")
 
     headers = {
         "accept":        "*/*",
@@ -150,6 +163,16 @@ def json_file_path(job_name: str, params: dict, json_dir: str) -> str:
     return os.path.join(
         json_dir, job_name, f"station_{station}_{start}_{end}.json"
     )
+
+
+def load_response(job_name: str, params: dict, json_dir: str):
+    """ Load a job payload saved under ``json_dir`` and return it. """
+
+    path = json_file_path(job_name, params, json_dir)
+    with open(path) as f:
+        items = json.load(f)
+    logger.verbose(f"[REQUEST_DATA]: Loaded {path}")
+    return items
 
 
 def save_response(job_name: str, params: dict, items, json_dir: str) -> str:

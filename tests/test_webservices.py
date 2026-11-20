@@ -181,6 +181,86 @@ def test_json_file_path_series_jobs():
         assert json_file_path(job, SERIES_PARAMS, "json") == expected.format(job=job)
 
 
+def test_load_response_returns_saved_payload(tmp_path):
+    items = [{"codigobacia": "1", "Nome_Bacia": "RIO AMAZONAS"}]
+    (tmp_path / "Bacia.json").write_text(json.dumps(items))
+
+    assert load_response("Bacia", {}, str(tmp_path)) == items
+
+
+@patch('hidrocli.webservices.request_hidro_ws')
+def test_request_job_data_reads_json_without_request(mock_request, tmp_path):
+    items = [{"codigobacia": "1"}]
+    (tmp_path / "Bacia.json").write_text(json.dumps(items))
+
+    success, result = request_job_data(
+        "Bacia", "token", {}, json_dir=str(tmp_path), read_json=True
+    )
+
+    assert success is True
+    assert result == items
+    mock_request.assert_not_called()
+
+
+@patch('hidrocli.webservices.save_response')
+def test_request_job_data_does_not_save_loaded_payload(mock_save, tmp_path):
+    items = [{"codigobacia": "1"}]
+    (tmp_path / "Bacia.json").write_text(json.dumps(items))
+
+    request_job_data(
+        "Bacia", "token", {},
+        save_json=True, json_dir=str(tmp_path), read_json=True,
+    )
+
+    mock_save.assert_not_called()
+
+
+@patch('hidrocli.webservices.request_hidro_ws')
+def test_request_job_data_read_json_falls_back_when_missing(mock_request,
+                                                            tmp_path):
+    items = [{"codigobacia": "1"}]
+    mock_request.return_value = {"items": items}
+
+    success, result = request_job_data(
+        "Bacia", "token", {}, json_dir=str(tmp_path), read_json=True
+    )
+
+    assert success is True
+    assert result == items
+    mock_request.assert_called_once()
+
+
+@patch('hidrocli.webservices.request_hidro_ws')
+def test_request_job_data_read_json_falls_back_when_corrupt(mock_request,
+                                                            tmp_path, caplog):
+    (tmp_path / "Bacia.json").write_text("{not json")
+    items = [{"codigobacia": "1"}]
+    mock_request.return_value = {"items": items}
+
+    success, result = request_job_data(
+        "Bacia", "token", {}, json_dir=str(tmp_path), read_json=True
+    )
+
+    assert success is True
+    assert result == items
+    mock_request.assert_called_once()
+    assert "requesting from API" in caplog.text
+
+
+@patch('hidrocli.webservices.request_hidro_ws')
+def test_request_job_data_saves_payload_after_read_fallback(mock_request,
+                                                            tmp_path):
+    items = [{"codigobacia": "1"}]
+    mock_request.return_value = {"items": items}
+
+    request_job_data(
+        "Bacia", "token", {},
+        save_json=True, json_dir=str(tmp_path), read_json=True,
+    )
+
+    assert json.loads((tmp_path / "Bacia.json").read_text()) == items
+
+
 @patch('hidrocli.webservices.request_hidro_ws')
 def test_request_job_data_saves_json(mock_request, tmp_path):
     items = [{"codigobacia": "1", "Nome_Bacia": "RIO AMAZONAS"}]

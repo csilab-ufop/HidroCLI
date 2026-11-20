@@ -52,6 +52,7 @@ RUN_FOR          = []
 STATIONS         = []
 FILTER           = "DATA_ULTIMA_ATUALIZACAO"
 SAVE_JSON        = False
+READ_JSON        = False
 JSON_DIR         = "json"
 
 
@@ -431,6 +432,7 @@ def handle_job_request(job: HidroJob, job_config: JobConfig) -> None:
         job_config, token, job.to_params(FILTER),
         save_json = SAVE_JSON,
         json_dir  = JSON_DIR,
+        read_json = READ_JSON,
     )
 
     if success:
