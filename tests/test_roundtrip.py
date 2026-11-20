@@ -25,7 +25,7 @@
 """Round-trip tests against real committed ANA payloads.
 
 Each base and series job has a small representative payload under
-``tests/json/`` (trimmed from a live ANA download). These tests run the
+``tests/fixtures/`` (trimmed from a live ANA download). These tests run the
 payload through the same convert -> validate -> write path used by
 ``hidrocli.jobs``, so a broken ``from_json`` mapping or verify key fails
 without needing the full download cache.
@@ -54,7 +54,7 @@ from hidrocli.models.hidro import HidroBase
 setup_logger()
 
 ALL_JOBS = list(JobConfig.Base) + list(JobConfig.Series)
-FIXTURES = Path(__file__).parent / "json"
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture

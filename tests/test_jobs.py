@@ -117,7 +117,7 @@ def test_process_period_returns_corrupted_for_future_date():
 
 
 def _load_json_file(job_config):
-    with open(f'./tests/json/{job_config}.json') as f:
+    with open(f'./tests/fixtures/{job_config}.json') as f:
         import json;
         return json.load(f)
 
