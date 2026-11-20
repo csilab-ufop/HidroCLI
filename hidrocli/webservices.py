@@ -100,11 +100,12 @@ def request_token(client_id: str, client_password: str, max_retries=3, retry_del
 
 
 def request_job_data(job_name: str, token: str, params: dict,
-                     json_dir: str | None = None) -> (bool, dict):
+                     save_json: bool = False,
+                     json_dir: str = "json") -> (bool, dict):
     """ Request data to ANA API and returns it.
 
-    When ``json_dir`` is given, the returned items are also saved there
-    following :func:`json_file_path`.
+    When ``save_json`` is true, the returned items are also written under
+    ``json_dir`` following :func:`json_file_path`.
     """
 
     headers = {
@@ -118,9 +119,9 @@ def request_job_data(job_name: str, token: str, params: dict,
         logger.verbose(f"[REQUEST_DATA]: (exception): {e}")
         return (False, [])
 
-    if json_dir is not None:
+    if save_json:
         try:
-            save_json(job_name, params, items, json_dir)
+            save_response(job_name, params, items, json_dir)
         except Exception as e:
             logger.warning(f"[REQUEST_DATA]: (save): {job_name}: {e}")
 
@@ -151,7 +152,7 @@ def json_file_path(job_name: str, params: dict, json_dir: str) -> str:
     )
 
 
-def save_json(job_name: str, params: dict, items, json_dir: str) -> str:
+def save_response(job_name: str, params: dict, items, json_dir: str) -> str:
     """ Save a job payload under ``json_dir`` and return the written path."""
 
     path      = json_file_path(job_name, params, json_dir)

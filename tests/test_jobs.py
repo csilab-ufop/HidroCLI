@@ -247,13 +247,10 @@ def test_trigger_job_streams_jobs(mock_iter, mock_handle, mock_writer,
 @patch('hidrocli.jobs.convert_json_items')
 @patch('hidrocli.jobs.request_job_data')
 @patch('hidrocli.jobs.get_token')
-@pytest.mark.parametrize("save_json, expected", [
-    (True,  "custom/json"),
-    (False, None),
-])
-def test_handle_job_request_passes_json_dir_when_enabled(
+@pytest.mark.parametrize("save_json", [True, False])
+def test_handle_job_request_passes_save_flags(
         mock_token, mock_request, mock_convert, mock_queue,
-        monkeypatch, save_json, expected):
+        monkeypatch, save_json):
     monkeypatch.setattr(hidrocli.jobs, "SAVE_JSON", save_json)
     monkeypatch.setattr(hidrocli.jobs, "JSON_DIR", "custom/json")
     mock_request.return_value = (True, [])
@@ -264,7 +261,10 @@ def test_handle_job_request_passes_json_dir_when_enabled(
         job, hidrocli.jobs.JobConfig.Base.BASIN
     )
 
-    assert mock_request.call_args.args[3] == expected
+    assert mock_request.call_args.kwargs == {
+        "save_json": save_json,
+        "json_dir":  "custom/json",
+    }
 
 
 @patch('hidrocli.jobs.reset_series_job_dates', return_value=3)

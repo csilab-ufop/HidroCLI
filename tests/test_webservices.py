@@ -186,7 +186,9 @@ def test_request_job_data_saves_json(mock_request, tmp_path):
     items = [{"codigobacia": "1", "Nome_Bacia": "RIO AMAZONAS"}]
     mock_request.return_value = {"items": items}
 
-    success, result = request_job_data("Bacia", "token", {}, str(tmp_path))
+    success, result = request_job_data(
+        "Bacia", "token", {}, save_json=True, json_dir=str(tmp_path)
+    )
 
     assert success is True
     assert result == items
@@ -199,7 +201,9 @@ def test_request_job_data_saves_json(mock_request, tmp_path):
 def test_request_job_data_creates_series_directory(mock_request, tmp_path):
     mock_request.return_value = {"items": [{"codigoestacao": "12345"}]}
 
-    request_job_data("Chuvas", "token", SERIES_PARAMS, str(tmp_path))
+    request_job_data(
+        "Chuvas", "token", SERIES_PARAMS, save_json=True, json_dir=str(tmp_path)
+    )
 
     path = tmp_path / "Chuvas" / "station_12345_1927-05-01_1928-05-01.json"
     assert path.is_file()
@@ -210,7 +214,9 @@ def test_request_job_data_creates_series_directory(mock_request, tmp_path):
 def test_request_job_data_saves_empty_items(mock_request, tmp_path):
     mock_request.return_value = {"items": []}
 
-    success, items = request_job_data("Bacia", "token", {}, str(tmp_path))
+    success, items = request_job_data(
+        "Bacia", "token", {}, save_json=True, json_dir=str(tmp_path)
+    )
 
     assert success is True
     assert items == []
@@ -218,24 +224,29 @@ def test_request_job_data_saves_empty_items(mock_request, tmp_path):
 
 
 @patch('hidrocli.webservices.request_hidro_ws')
-def test_request_job_data_does_not_save_without_dir(mock_request, tmp_path,
-                                                    monkeypatch):
+def test_request_job_data_does_not_save_when_disabled(mock_request, tmp_path,
+                                                      monkeypatch):
     monkeypatch.chdir(tmp_path)
     mock_request.return_value = {"items": [{"codigobacia": "1"}]}
 
-    request_job_data("Bacia", "token", {})
+    request_job_data(
+        "Bacia", "token", {}, save_json=False, json_dir=str(tmp_path / "json")
+    )
 
     assert list(tmp_path.iterdir()) == []
 
 
-@patch('hidrocli.webservices.save_json', side_effect=OSError("disk full"))
+@patch('hidrocli.webservices.save_response', side_effect=OSError("disk full"))
 @patch('hidrocli.webservices.request_hidro_ws')
-def test_request_job_data_save_failure_keeps_data(mock_request, mock_save):
+def test_request_job_data_save_failure_keeps_data(mock_request,
+                                                  mock_save_response):
     items = [{"codigobacia": "1"}]
     mock_request.return_value = {"items": items}
 
-    success, result = request_job_data("Bacia", "token", {}, "json")
+    success, result = request_job_data(
+        "Bacia", "token", {}, save_json=True, json_dir="json"
+    )
 
     assert success is True
     assert result == items
-    mock_save.assert_called_once()
+    mock_save_response.assert_called_once()

@@ -429,7 +429,8 @@ def handle_job_request(job: HidroJob, job_config: JobConfig) -> None:
         token = get_token()
     success, items = request_job_data(
         job_config, token, job.to_params(FILTER),
-        JSON_DIR if SAVE_JSON else None,
+        save_json = SAVE_JSON,
+        json_dir  = JSON_DIR,
     )
 
     if success:
