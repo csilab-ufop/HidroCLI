@@ -286,6 +286,26 @@ def test_handle_job_request_passes_json_flags(
     }
 
 
+@patch('hidrocli.jobs.write_queue')
+@patch('hidrocli.jobs.request_job_data',
+       side_effect=PermissionError("401"))
+@patch('hidrocli.jobs.get_token', return_value="token")
+def test_handle_job_request_skips_unauthorized(mock_token, mock_request,
+                                               mock_queue):
+    """A 401 leaves the job PENDING and excludes it from this run."""
+
+    config = hidrocli.jobs.JobConfig.Series.RAIN
+    job    = MagicMock()
+    job.ID = 42
+    job.Status = hidrocli.jobs.JobConfig.Status.PENDING.value
+    job.to_params.return_value = {}
+
+    hidrocli.jobs.handle_job_request(job, config)
+
+    assert job.Status == hidrocli.jobs.JobConfig.Status.PENDING.value
+    mock_queue.put.assert_not_called()
+
+
 @patch('hidrocli.jobs.reset_series_job_dates', return_value=3)
 @patch('hidrocli.jobs.get_period')
 def test_update_series_job_uses_bulk_reset(mock_period, mock_reset,

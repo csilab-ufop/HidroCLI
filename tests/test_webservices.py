@@ -73,6 +73,32 @@ def test_request_hidro_ws_error(mock_sleep, mock_get):
 
 
 @patch('hidrocli.webservices.requests.get')
+@patch('hidrocli.webservices.time.sleep')
+def test_request_hidro_ws_unauthorized_raises(mock_sleep, mock_get):
+    """Test that 401 raises instead of being treated as transient."""
+
+    mock_response                   = Mock()
+    mock_response.ok                = False
+    mock_response.status_code       = 401
+    mock_response.json.return_value = {"error": "Unauthorized"}
+    mock_get.return_value           = mock_response
+
+    with pytest.raises(PermissionError):
+        request_hidro_ws("/endpoint", {})
+
+    mock_sleep.assert_not_called()
+
+
+@patch('hidrocli.webservices.requests.get')
+def test_request_hidro_ws_timeout_returns_none(mock_get):
+    """Test that a timeout returns None without an unbound response."""
+
+    mock_get.side_effect = requests.exceptions.Timeout
+
+    assert request_hidro_ws("/endpoint", {}) is None
+
+
+@patch('hidrocli.webservices.requests.get')
 def test_request_hidro_ws_json_exception(mock_get):
     """Test handling of JSON decode error on successful response."""
 
@@ -186,6 +212,16 @@ def test_load_response_returns_saved_payload(tmp_path):
     (tmp_path / "Bacia.json").write_text(json.dumps(items))
 
     assert load_response("Bacia", {}, str(tmp_path)) == items
+
+
+@patch('hidrocli.webservices.request_hidro_ws')
+def test_request_job_data_unauthorized_raises(mock_request):
+    """Test that a 401 is propagated so the caller can skip the job."""
+
+    mock_request.side_effect = PermissionError("401")
+
+    with pytest.raises(PermissionError):
+        request_job_data("Bacia", "token", {})
 
 
 @patch('hidrocli.webservices.request_hidro_ws')

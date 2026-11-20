@@ -52,8 +52,12 @@ _DATA_ENDPOINTS_MAP = {
 
 _BASE_JOBS = {"Bacia", "SubBacia", "Entidade", "Municipio", "Rio", "Estado"}
 
+
 def request_hidro_ws(endpoint, headers, params={}):
-    """ Make a request to ANA API and returns the json."""
+    """ Make a request to ANA API and returns the json.
+
+    :raises PermissionError: when the API rejects the access token (HTTP 401).
+    """
 
     url = "https://www.ana.gov.br/hidrowebservice"
     logger.verbose(f"[REQUEST]: Endpoint: {endpoint}\nHeaders: {headers}\nParams: {params}")
@@ -61,6 +65,7 @@ def request_hidro_ws(endpoint, headers, params={}):
         response = requests.get(f"{url}{endpoint}", headers=headers, params=params, timeout=300)
     except requests.exceptions.Timeout:
         logger.warning(f"[REQUEST]: Timeout reached for {endpoint}, params: {params}")
+        return None
     if response.ok:
         try:
             return response.json()
@@ -72,9 +77,10 @@ def request_hidro_ws(endpoint, headers, params={}):
         except:
             logger.debug(f"[REQUEST]: (response): {response} (status: {response.status_code})")
         match response.status_code:
-            case 401 | 503 | 504:
+            case 401:
+                raise PermissionError(f"{endpoint} rejected the access token")
+            case 503 | 504:
                 time.sleep(1)
-                return
 
 def request_token(client_id: str, client_password: str, max_retries=3, retry_delay=2):
     """ Request an token to ANA API and returns it."""
@@ -111,6 +117,12 @@ def request_job_data(job_name: str, token: str, params: dict,
 
     When ``save_json`` is true, payloads fetched from the API are also written
     under ``json_dir`` following :func:`json_file_path`.
+
+    :returns: ``(True, items)`` on success, ``(False, [])`` on a request
+        failure.
+
+    :raises PermissionError: when the API rejects the access token (HTTP
+        401), so the caller can skip the job without retrying it.
     """
 
     if read_json:
@@ -128,6 +140,8 @@ def request_job_data(job_name: str, token: str, params: dict,
     endpoint = _DATA_ENDPOINTS_MAP[job_name]
     try:
         items = request_hidro_ws(endpoint, headers, params).get("items", {})
+    except PermissionError:
+        raise
     except Exception as e:
         logger.verbose(f"[REQUEST_DATA]: (exception): {e}")
         return (False, [])

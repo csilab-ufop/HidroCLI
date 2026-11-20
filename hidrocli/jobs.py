@@ -428,12 +428,16 @@ def handle_job_request(job: HidroJob, job_config: JobConfig) -> None:
     start = time.time()
     with token_lock:
         token = get_token()
-    success, items = request_job_data(
-        job_config, token, job.to_params(FILTER),
-        save_json = SAVE_JSON,
-        json_dir  = JSON_DIR,
-        read_json = READ_JSON,
-    )
+    try:
+        success, items = request_job_data(
+            job_config, token, job.to_params(FILTER),
+            save_json = SAVE_JSON,
+            json_dir  = JSON_DIR,
+            read_json = READ_JSON,
+        )
+    except PermissionError:
+        logger.warning(f"[WORKER JOB {job.ID}]: Unauthorized, skipping.")
+        return
 
     if success:
         try:
