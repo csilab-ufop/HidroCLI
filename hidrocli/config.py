@@ -48,8 +48,8 @@ def setup_arguments():
                         help='Batch size threshold to write job data on Hidro Database')
 
     parser.add_argument('--log-level', default='INFO',
-                        choices=['TRACE', 'VERBOSE', 'DEBUG', 'INFO', 'WARNING', 'ERROR'],
-                        help='Set logging level')
+                        choices=['TRACE', 'VERBOSE', 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'NONE'],
+                        help='Set logging level (NONE disables all logging)')
 
     parser.add_argument('--skip-series-jobs', action='store_true', default=False,
                         help='Skip all series jobs when present')
@@ -113,8 +113,9 @@ def setup_logger():
     VERBOSE = 5
     setattr(logging.Logger, 'verbose', _make_logger(VERBOSE))
     logging.addLevelName(VERBOSE, 'VERBOSE')
+    level = logging.CRITICAL + 1 if LOG_LEVEL == 'NONE' else LOG_LEVEL
     logging.basicConfig(
-        level=LOG_LEVEL,
+        level=level,
         format='[%(levelname)s]: %(message)s'
     )
 

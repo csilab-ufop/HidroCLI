@@ -108,6 +108,26 @@ def test_setup_arguments_read_json_flag():
         assert hidrocli.jobs.JSON_DIR  == 'custom/json'
 
 
+def test_setup_arguments_accepts_none_log_level():
+    with patch('sys.argv', ['script_name', '--log-level', 'NONE']):
+        hidrocli.config.setup_arguments()
+
+    assert hidrocli.config.LOG_LEVEL == 'NONE'
+
+
+def test_setup_logger_none_disables_logging():
+    import logging
+    hidrocli.config.LOG_LEVEL = 'NONE'
+
+    with patch('logging.basicConfig') as mock_config:
+        hidrocli.config.setup_logger()
+
+    mock_config.assert_called_once_with(
+        level=logging.CRITICAL + 1,
+        format='[%(levelname)s]: %(message)s'
+    )
+
+
 def test_setup_logger_creates_custom_levels(caplog):
 
     import logging;
