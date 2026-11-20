@@ -800,7 +800,9 @@ def run():
         logger.info(f"====================================\n")
 
     if SKIP_SERIES_JOBS:
+        logger.info(f"====================================")
         logger.info(f"Skiping series jobs.\n")
+        logger.info(f"====================================")
         return
 
     for job in JobConfig.Series:
