@@ -337,7 +337,7 @@ def process_period(station_code, start_date, end_date, job_config):
             Status        = JobConfig.Status.CORRUPTED.value,
         ))
         return jobs
-    total_years  = end_date.year - start_date.year
+    total_years  = max(1, end_date.year - start_date.year)
     current_year = start_date
     for count_year in range(1, total_years+1):
         next_year = current_year.replace(year=current_year.year+1)

@@ -116,6 +116,22 @@ def test_process_period_returns_corrupted_for_future_date():
     assert result[0].Status == 4
 
 
+@pytest.mark.parametrize("start_date, end_date", [
+    ("1970-09-01 00:00:00", "1970-12-01 00:00:00"),
+    ("1970-09-01 00:00:00", "1970-09-01 00:00:00"),
+])
+def test_process_period_creates_same_year_job(start_date, end_date):
+    """Periods shorter than a year must still produce one job."""
+
+    from hidrocli.jobs import JobConfig, process_period
+    result = process_period(123456, start_date, end_date, JobConfig.Series.RAIN)
+
+    assert len(result) == 1
+    assert result[0].Status == JobConfig.Status.PENDING.value
+    assert result[0].FromDate == datetime.strptime(start_date, "%Y-%m-%d %H:%M:%S")
+    assert result[0].ToDate   == datetime.strptime(end_date, "%Y-%m-%d %H:%M:%S")
+
+
 def _load_json_file(job_config):
     with open(f'./tests/fixtures/{job_config}.json') as f:
         import json;
