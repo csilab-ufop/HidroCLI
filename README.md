@@ -1,5 +1,9 @@
 # HidroCLI
 
+[![Release](https://github.com/csilab-ufop/hidrocli/actions/workflows/release.yml/badge.svg)](https://github.com/csilab-ufop/hidrocli/actions/workflows/release.yml)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-BSD--2--Clause-blue)](LICENSE)
+
 An python application tool to request and sync data from ANA Hidro WebServices.
 
 ## Installation
@@ -12,9 +16,9 @@ An python application tool to request and sync data from ANA Hidro WebServices.
 
 ## Development
 
-- Clone the repository:
+- Clone the repository including the docs submodule:
 ``` shell
-    git clone https://github.com/csilab-ufop/hidrocli
+    git clone --recurse-submodules https://github.com/csilab-ufop/hidrocli
 ```
 
 - Setup your python enviroment and install dependencies:
