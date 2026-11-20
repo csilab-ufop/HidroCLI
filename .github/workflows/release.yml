@@ -11,8 +11,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Tests must pass before any release step is allowed to run.
+  test:
+    name: Tests
+    uses: ./.github/workflows/test.yml
+
   release:
     name: Semantic release
+    needs: test
     runs-on: ubuntu-latest
     env:
       # A PAT is only required if `main` is protected against pushes from
