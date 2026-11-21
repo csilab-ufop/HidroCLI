@@ -717,93 +717,91 @@ def _record_provenance(job_config, data_table, items, data_ids=None):
     upsert_job_records(records)
 
 
+def _upsert(data_table, items):
+    """Insert or update ``items`` and return the newly created rows."""
+
+    entries = handle_batch_update(data_table, items)
+    if entries:
+        insert_hidro(entries, expire=False)
+    return entries
+
+
+def _water_quality_status_items(items, entries):
+    """Attach each item's ``QualAguaID`` and keep rows with a resolved parent."""
+
+    lookup = {(entry.EstacaoCodigo, entry.Data): entry.RegistroID
+              for entry in entries}
+    missing = [
+        item for item in items
+        if (item['codigoestacao'], item['Data_Hora_Dado']) not in lookup
+    ]
+    if missing:
+        lookup.update(get_qual_agua_ids(missing))
+
+    for item in items:
+        item['QualAguaID'] = lookup.get(
+            (item['codigoestacao'], item['Data_Hora_Dado'])
+        )
+
+    return [item for item in items if item['QualAguaID'] is not None]
+
+
+def _vertical_cross_section_entries(items, parent_items, parent_ids):
+    """Build one vertical row per raw item, linked to its parent section."""
+
+    parent_by_key = dict(zip(
+        (item['Registro_ID'] for item in parent_items), parent_ids))
+    vertical_items = [
+        item for item in items
+        if item.get('Registro_ID') in parent_by_key
+    ]
+    return vertical_items, [
+        VerticalCrossSection.from_json(
+            item, parent_by_key[item['Registro_ID']]
+        )
+        for item in vertical_items
+    ]
+
+
 def write_data(job_config: JobConfig, jobs: List[HidroJob], items) -> float:
     """Insert data into DB and update the jobs as well. """
 
     start_time = time.perf_counter()
     entries = []
-    if len(items) > 0:
+
+    if items:
+        filtered_items = items
+        if not isinstance(job_config, JobConfig.Base):
+            filtered_items = filter_repeated_series_items(job_config, items)
 
         match job_config:
-            case JobConfig.Series():
-                filtered_items = filter_repeated_series_items(job_config, items)
-
-        match job_config:
-            case JobConfig.Base():
-                entries = handle_batch_update(job_config, items)
-                if entries:
-                    insert_hidro(entries)
-                _record_provenance(job_config, job_config, items)
-
-            case (JobConfig.Series.RAIN          | JobConfig.Series.DISCHARGE_SUMMARY |
-                      JobConfig.Series.FLOW_RATE | JobConfig.Series.SEDIMENTS         |
-                      JobConfig.Series.STAGE     | JobConfig.Series.GRANULOMETRY      |
-                      JobConfig.Series.DISCHARGE_FLOW):
-                entries = handle_batch_update(job_config, filtered_items)
-                if entries:
-                    insert_hidro(entries)
+            case (JobConfig.Series.RAIN           | JobConfig.Series.DISCHARGE_SUMMARY |
+                  JobConfig.Series.FLOW_RATE      | JobConfig.Series.SEDIMENTS         |
+                  JobConfig.Series.STAGE          | JobConfig.Series.GRANULOMETRY      |
+                  JobConfig.Series.DISCHARGE_FLOW | JobConfig.Base()):
+                entries = _upsert(job_config, filtered_items)
                 _record_provenance(job_config, job_config, filtered_items)
 
             case JobConfig.Series.WATER_QUALITY:
-                entries = handle_batch_update(job_config, filtered_items)
-                if entries:
-                    entries = insert_hidro(entries, False)
+                entries = _upsert(job_config, filtered_items)
                 _record_provenance(job_config, job_config, filtered_items)
 
-                lookup = {
-                    (entry.EstacaoCodigo, entry.Data): entry.RegistroID
-                    for entry in entries
-                }
-                missing = [
-                    item for item in filtered_items
-                    if (item['codigoestacao'], item['Data_Hora_Dado']) not in lookup
-                ]
-                if missing:
-                    lookup.update(get_qual_agua_ids(missing))
-
-                for item in filtered_items:
-                    item['QualAguaID'] = lookup.get(
-                        (item['codigoestacao'], item['Data_Hora_Dado'])
-                    )
-
-                status_items = [
-                    item for item in filtered_items
-                    if item.get('QualAguaID') is not None
-                ]
+                status_items = _water_quality_status_items(filtered_items, entries)
                 if status_items:
-                    water_status_entries = handle_batch_update(
-                        f'{job_config}Status', status_items)
-                    if water_status_entries:
-                        insert_hidro(water_status_entries)
-                    _record_provenance(
-                        job_config, f'{job_config}Status', status_items)
+                    _upsert(f'{job_config}Status', status_items)
+                    _record_provenance(job_config, f'{job_config}Status', status_items)
 
             case JobConfig.Series.CROSS_SECTION:
-                entries = handle_batch_update(job_config, filtered_items)
-                if entries:
-                    insert_hidro(entries, False)
+                parent_items = filtered_items
+                entries = _upsert(job_config, parent_items)
+                parent_ids = get_registro_ids(str(job_config), parent_items)
+                _record_provenance(job_config, job_config, parent_items, parent_ids)
 
-                parent_ids = get_registro_ids(str(job_config), filtered_items)
-                _record_provenance(
-                    job_config, job_config, filtered_items, parent_ids)
-
-                parent_by_key = dict(zip(
-                    (item['Registro_ID'] for item in filtered_items),
-                    parent_ids,
-                ))
-                vertical_items = [
-                    item for item in items
-                    if item.get('Registro_ID') in parent_by_key
-                ]
-                vertical_entries = [
-                    VerticalCrossSection.from_json(
-                        item, parent_by_key[item['Registro_ID']]
-                    )
-                    for item in vertical_items
-                ]
-
+                # Levels live in the raw items; parent rows are deduplicated.
+                vertical_items, vertical_entries = _vertical_cross_section_entries(
+                    items, parent_items, parent_ids)
                 if vertical_entries:
-                    inserted = insert_hidro(vertical_entries, False)
+                    inserted = insert_hidro(vertical_entries, expire=False)
                     _record_provenance(
                         job_config,
                         "PerfilTransversalVert",
@@ -811,7 +809,7 @@ def write_data(job_config: JobConfig, jobs: List[HidroJob], items) -> float:
                         [entry.RegistroID for entry in inserted],
                     )
 
-    if len(jobs) > 0:
+    if jobs:
         update_jobs(jobs, job_config)
         logger.trace(f"[WRITER {job_config}]: Updated {len(jobs)} jobs")
     elapsed_time = time.perf_counter() - start_time
