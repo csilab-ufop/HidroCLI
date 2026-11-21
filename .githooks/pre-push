@@ -1,0 +1,100 @@
+#!/bin/sh
+# Regenerate HidroCLI documentation before pushing main.
+#
+# `hidro-docs` refreshes README.md and the hidrocli_docs/wiki submodule. This
+# hook commits those generated files, pushes the wiki repository, then aborts
+# the push so the new commit is included when the push is retried.
+#
+# Enable it once per clone with:
+#
+#     hidrocli_docs/install-hooks.sh
+#
+# Set HIDRO_DOCS_DRY_RUN=1 to regenerate and report changes without committing
+# or pushing.
+
+set -u
+
+zero="0000000000000000000000000000000000000000"
+push_main=false
+wiki="hidrocli_docs/wiki"
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    if [ "$remote_ref" = "refs/heads/main" ] && [ "$local_sha" != "$zero" ]; then
+        push_main=true
+    fi
+done
+
+[ "$push_main" = true ] || exit 0
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+fail() {
+    printf 'pre-push: %s\n' "$*" >&2
+    exit 1
+}
+
+branch=$(git symbolic-ref --quiet --short HEAD) ||
+    fail "cannot regenerate docs from a detached HEAD; push main from a main checkout."
+[ "$branch" = "main" ] ||
+    fail "cannot regenerate docs while on '$branch'; push main from a main checkout."
+
+git rev-parse -q --verify MERGE_HEAD >/dev/null &&
+    fail "merge in progress; finish it before pushing main."
+git rev-parse -q --verify CHERRY_PICK_HEAD >/dev/null &&
+    fail "cherry-pick in progress; finish it before pushing main."
+{ [ -d "$(git rev-parse --git-path rebase-merge)" ] ||
+  [ -d "$(git rev-parse --git-path rebase-apply)" ]; } &&
+    fail "rebase in progress; finish it before pushing main."
+[ -z "$(git ls-files -u)" ] ||
+    fail "unmerged paths; resolve them before pushing main."
+
+git -C "$wiki" rev-parse --verify HEAD >/dev/null 2>&1 ||
+    fail "$wiki is not initialized; run: git submodule update --init $wiki"
+
+if [ -x .venv/bin/hidro-docs ]; then
+    docs=.venv/bin/hidro-docs
+elif command -v hidro-docs >/dev/null 2>&1; then
+    docs=hidro-docs
+else
+    fail "hidro-docs is not installed; run: pip install -e ./hidrocli_docs"
+fi
+
+printf 'pre-push: regenerating documentation...\n'
+"$docs" ||
+    fail "documentation generation failed."
+
+if [ "${HIDRO_DOCS_DRY_RUN:-0}" = "1" ]; then
+    printf 'pre-push: dry run, nothing will be committed or pushed.\n'
+    git status --short -- README.md "$wiki"
+    git -C "$wiki" status --short
+    exit 0
+fi
+
+wiki_head=$(git -C "$wiki" rev-parse HEAD)
+if [ -n "$(git -C "$wiki" status --porcelain)" ]; then
+    git -C "$wiki" add -A
+    git -C "$wiki" commit \
+        -m "chore(docs): regenerate documentation from $(git rev-parse --short HEAD)" ||
+        fail "could not commit the regenerated wiki pages."
+fi
+
+# Push whenever the local wiki HEAD is not already contained in the remote
+# branch. This also publishes a commit left behind by an earlier failed run.
+wiki_branch=$(git -C "$wiki" symbolic-ref --quiet --short HEAD || printf 'master')
+if [ "$(git -C "$wiki" rev-parse HEAD)" != "$wiki_head" ] ||
+   ! git -C "$wiki" merge-base --is-ancestor HEAD "origin/$wiki_branch" 2>/dev/null; then
+    git -C "$wiki" push origin "HEAD:$wiki_branch" ||
+        fail "could not push $wiki to origin/$wiki_branch."
+fi
+
+if [ -z "$(git status --porcelain -- README.md "$wiki")" ]; then
+    printf 'pre-push: documentation is up to date.\n'
+    exit 0
+fi
+
+git add -- README.md "$wiki"
+git commit -m "chore(docs): regenerate documentation" -- README.md "$wiki" ||
+    fail "could not commit the regenerated documentation."
+
+printf 'pre-push: documentation committed; push again to publish it.\n'
+exit 1
