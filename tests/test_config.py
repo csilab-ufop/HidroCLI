@@ -40,6 +40,8 @@ def test_setup_arguments_defaults():
         assert hidrocli.jobs.BATCH_SIZE    == 1000
         assert hidrocli.jobs.FILTER        == 'DATA_ULTIMA_ATUALIZACAO'
         assert hidrocli.jobs.STATIONS      == []
+        assert hidrocli.jobs.INITIAL_DATE  is None
+        assert hidrocli.jobs.FINAL_DATE    is None
         assert hidrocli.jobs.SAVE_JSON     is False
         assert hidrocli.jobs.READ_JSON     is False
         assert hidrocli.jobs.JSON_DIR      == 'json'
@@ -169,3 +171,37 @@ def test_setup_logger_creates_custom_levels(caplog):
     logging.getLogger().verbose("verbose message")
     assert "verbose message" in caplog.text
     assert "VERBOSE" in caplog.text
+
+
+def test_setup_arguments_parses_initial_and_final_dates(monkeypatch):
+    from datetime import datetime
+    import hidrocli.jobs
+
+    monkeypatch.setattr(hidrocli.jobs, "INITIAL_DATE", None)
+    monkeypatch.setattr(hidrocli.jobs, "FINAL_DATE", None)
+
+    test_arguments = ['script_name',
+                      '--initial-date', '2020-01-01',
+                      '--final-date',   '2020-12-31']
+
+    with patch('sys.argv', test_arguments):
+        hidrocli.config.setup_arguments()
+
+    assert hidrocli.jobs.INITIAL_DATE == datetime(2020, 1, 1)
+    assert hidrocli.jobs.FINAL_DATE   == datetime(2020, 12, 31)
+
+
+def test_setup_arguments_rejects_invalid_date_format():
+    with patch('sys.argv', ['script_name', '--initial-date', '01/02/2020']):
+        with pytest.raises(SystemExit):
+            hidrocli.config.setup_arguments()
+
+
+def test_setup_arguments_rejects_inverted_date_range():
+    test_arguments = ['script_name',
+                      '--initial-date', '2021-01-01',
+                      '--final-date',   '2020-01-01']
+
+    with patch('sys.argv', test_arguments):
+        with pytest.raises(SystemExit):
+            hidrocli.config.setup_arguments()

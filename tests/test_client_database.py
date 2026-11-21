@@ -419,3 +419,61 @@ def test_reset_series_job_dates_only_updates_stale(client_db):
         assert jobs[3].Status == 4
     finally:
         session.close()
+
+
+def test_create_job_filters_restricts_to_requested_date_window(client_db):
+    insert_jobs([
+        SeriesJobs(
+            HidroTable="Chuvas", StationID=station,
+            FromDate=start, ToDate=end, Status=1,
+        )
+        for station, start, end in [
+            (1, datetime(2020, 1, 1), datetime(2021, 1, 1)),
+            (2, datetime(2021, 1, 1), datetime(2022, 1, 1)),
+            (3, datetime(2019, 1, 1), datetime(2020, 1, 1)),
+        ]
+    ])
+
+    filters = create_job_filters(
+        "Chuvas", [1], last_check=False,
+        initial_date=datetime(2020, 1, 1),
+        final_date=datetime(2021, 1, 1),
+    )
+
+    session = client_db.get_session()
+    try:
+        stations = [
+            job.StationID
+            for job in session.query(SeriesJobs).filter(*filters).all()
+        ]
+    finally:
+        session.close()
+
+    assert stations == [1]
+
+
+def test_update_series_job_windows_updates_overlap_in_database(client_db):
+    from hidrocli.jobs import JobConfig, update_series_job_windows
+
+    insert_jobs([
+        SeriesJobs(
+            HidroTable="Chuvas", StationID=1,
+            FromDate=datetime(2020, 6, 1), ToDate=datetime(2021, 6, 1),
+            Status=5, Retries=2,
+        )
+    ])
+
+    update_series_job_windows(
+        JobConfig.Series.RAIN,
+        [(1, datetime(2020, 1, 1), datetime(2021, 1, 1))],
+    )
+
+    session = client_db.get_session()
+    try:
+        job = session.query(SeriesJobs).one()
+        assert job.FromDate == datetime(2020, 1, 1)
+        assert job.ToDate   == datetime(2021, 1, 1)
+        assert job.Status   == JobConfig.Status.PENDING.value
+        assert job.Retries  == 0
+    finally:
+        session.close()

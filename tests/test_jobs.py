@@ -469,3 +469,201 @@ def test_trigger_series_jobs_retries_until_none(mock_count, mock_trigger,
     mock_trigger.assert_called_once_with(
         hidrocli.jobs.JobConfig.Series.RAIN, []
     )
+
+
+def test_process_period_creates_yearly_windows():
+    jobs = hidrocli.jobs.process_period(
+        1,
+        datetime(2020, 6, 1),
+        datetime(2022, 1, 1),
+        hidrocli.jobs.JobConfig.Series.RAIN,
+    )
+
+    assert [(job.FromDate, job.ToDate) for job in jobs] == [
+        (datetime(2020, 6, 1), datetime(2021, 6, 1)),
+        (datetime(2021, 6, 1), datetime(2022, 1, 1)),
+    ]
+
+
+def _series_job(job_id, station, start, end, status=5, retries=0):
+    job = hidrocli.jobs.SeriesJobs(
+        HidroTable=hidrocli.jobs.JobConfig.Series.RAIN,
+        StationID=station,
+        FromDate=start,
+        ToDate=end,
+        Status=status,
+        Retries=retries,
+    )
+    job.ID = job_id
+    return job
+
+
+def test_reconcile_jobs_keeps_updates_and_inserts():
+    exact   = _series_job(1, 10, datetime(2020, 1, 1), datetime(2021, 1, 1))
+    overlap = _series_job(2, 10, datetime(2020, 6, 1), datetime(2021, 6, 1))
+    jobs    = [exact, overlap]
+    desired = [
+        _series_job(None, 10, datetime(2020, 1, 1), datetime(2021, 1, 1), status=1),
+        _series_job(None, 10, datetime(2021, 1, 1), datetime(2022, 1, 1), status=1),
+        _series_job(None, 10, datetime(2022, 1, 1), datetime(2023, 1, 1), status=1),
+    ]
+
+    updates, new_jobs = hidrocli.jobs._reconcile_jobs(jobs, desired)
+
+    assert updates == [{
+        "ID":       overlap.ID,
+        "FromDate": desired[1].FromDate,
+        "ToDate":   desired[1].ToDate,
+        "Status":   desired[1].Status,
+        "Retries":  0,
+    }]
+    assert new_jobs == [desired[2]]
+    assert jobs == []
+
+
+@patch('hidrocli.jobs.insert_jobs_bulk')
+@patch('hidrocli.jobs.update_job_mappings')
+@patch('hidrocli.jobs.iter_jobs')
+def test_update_series_job_windows_keeps_exact_matches(
+        mock_iter, mock_update, mock_insert, monkeypatch):
+    start, end = datetime(2020, 1, 1), datetime(2021, 1, 1)
+    mock_iter.return_value = [_series_job(1, 10, start, end)]
+    monkeypatch.setattr(hidrocli.jobs, "BATCH_SIZE", 100)
+
+    hidrocli.jobs.update_series_job_windows(
+        hidrocli.jobs.JobConfig.Series.RAIN, [(10, start, end)]
+    )
+
+    mock_update.assert_not_called()
+    mock_insert.assert_not_called()
+
+
+@patch('hidrocli.jobs.insert_jobs_bulk')
+@patch('hidrocli.jobs.update_job_mappings')
+@patch('hidrocli.jobs.iter_jobs')
+def test_update_series_job_windows_updates_overlapping_job(
+        mock_iter, mock_update, mock_insert, monkeypatch):
+    job = _series_job(
+        7, 10, datetime(2020, 1, 1), datetime(2021, 1, 1),
+        status=5, retries=3,
+    )
+    mock_iter.return_value = [job]
+    monkeypatch.setattr(hidrocli.jobs, "BATCH_SIZE", 100)
+    start, end = datetime(2020, 6, 1), datetime(2021, 6, 1)
+
+    hidrocli.jobs.update_series_job_windows(
+        hidrocli.jobs.JobConfig.Series.RAIN, [(10, start, end)]
+    )
+
+    mock_update.assert_called_once()
+    mapping = mock_update.call_args.args[1][0]
+    assert mapping == {
+        "ID":       job.ID,
+        "FromDate": start,
+        "ToDate":   end,
+        "Status":   hidrocli.jobs.JobConfig.Status.PENDING.value,
+        "Retries":  0,
+    }
+    mock_insert.assert_not_called()
+
+
+@patch('hidrocli.jobs.insert_jobs_bulk')
+@patch('hidrocli.jobs.update_job_mappings')
+@patch('hidrocli.jobs.iter_jobs', return_value=[])
+def test_update_series_job_windows_inserts_missing_year(
+        mock_iter, mock_update, mock_insert, monkeypatch):
+    monkeypatch.setattr(hidrocli.jobs, "BATCH_SIZE", 100)
+    start, end = datetime(2020, 1, 1), datetime(2021, 1, 1)
+
+    hidrocli.jobs.update_series_job_windows(
+        hidrocli.jobs.JobConfig.Series.RAIN, [(10, start, end)]
+    )
+
+    mock_update.assert_not_called()
+    mock_insert.assert_called_once()
+    inserted = mock_insert.call_args.args[0][0]
+    assert inserted.StationID == 10
+    assert inserted.FromDate == start
+    assert inserted.ToDate == end
+    assert inserted.Status == hidrocli.jobs.JobConfig.Status.PENDING.value
+
+
+@patch('hidrocli.jobs.trigger_series_jobs')
+@patch('hidrocli.jobs.update_series_job')
+@patch('hidrocli.jobs.update_series_job_windows')
+@patch('hidrocli.jobs.create_series_jobs')
+@patch('hidrocli.jobs.get_station_ids', return_value={2})
+@patch('hidrocli.jobs.get_period')
+def test_check_series_job_applies_date_overrides(
+        mock_period, mock_station_ids, mock_create, mock_update_windows,
+        mock_update, mock_trigger, monkeypatch):
+    mock_period.return_value.all.return_value = [
+        (1, datetime(2000, 1, 1), datetime(2010, 1, 1)),
+        (2, datetime(2001, 1, 1), datetime(2011, 1, 1)),
+    ]
+    monkeypatch.setattr(hidrocli.jobs, "STATIONS", [])
+    monkeypatch.setattr(
+        hidrocli.jobs, "INITIAL_DATE", datetime(2005, 1, 1)
+    )
+    monkeypatch.setattr(
+        hidrocli.jobs, "FINAL_DATE", datetime(2008, 1, 1)
+    )
+
+    hidrocli.jobs.check_series_job(
+        hidrocli.jobs.JobConfig.Series.RAIN
+    )
+
+    mock_create.assert_called_once()
+    created = mock_create.call_args.args[0]
+    assert created == [(1, datetime(2005, 1, 1), datetime(2008, 1, 1))]
+    mock_update_windows.assert_called_once_with(
+        hidrocli.jobs.JobConfig.Series.RAIN,
+        [(2, datetime(2005, 1, 1), datetime(2008, 1, 1))],
+    )
+    mock_update.assert_not_called()
+    mock_trigger.assert_called_once()
+
+
+@patch('hidrocli.jobs.trigger_series_jobs')
+@patch('hidrocli.jobs.update_series_job')
+@patch('hidrocli.jobs.update_series_job_windows')
+@patch('hidrocli.jobs.create_series_jobs')
+@patch('hidrocli.jobs.get_station_ids', return_value=set())
+@patch('hidrocli.jobs.get_period')
+def test_check_series_job_keeps_stale_reset_without_final_date(
+        mock_period, mock_station_ids, mock_create, mock_update_windows,
+        mock_update, mock_trigger, monkeypatch):
+    mock_period.return_value.all.return_value = [
+        (1, datetime(2000, 1, 1), datetime(2010, 1, 1)),
+    ]
+    monkeypatch.setattr(hidrocli.jobs, "STATIONS", [])
+    monkeypatch.setattr(
+        hidrocli.jobs, "INITIAL_DATE", datetime(2005, 1, 1)
+    )
+    monkeypatch.setattr(hidrocli.jobs, "FINAL_DATE", None)
+
+    hidrocli.jobs.check_series_job(
+        hidrocli.jobs.JobConfig.Series.RAIN
+    )
+
+    mock_update.assert_called_once_with(
+        hidrocli.jobs.JobConfig.Series.RAIN
+    )
+
+
+@patch('hidrocli.jobs.create_job_filters', return_value=[])
+@patch('hidrocli.jobs.trigger_job')
+@patch('hidrocli.jobs.count_job', return_value=0)
+def test_trigger_series_jobs_passes_date_bounds(
+        mock_count, mock_trigger, mock_filters, monkeypatch):
+    initial = datetime(2020, 1, 1)
+    final   = datetime(2021, 1, 1)
+    monkeypatch.setattr(hidrocli.jobs, "INITIAL_DATE", initial)
+    monkeypatch.setattr(hidrocli.jobs, "FINAL_DATE", final)
+
+    hidrocli.jobs.trigger_series_jobs(
+        hidrocli.jobs.JobConfig.Series.RAIN
+    )
+
+    assert mock_filters.call_args.kwargs["initial_date"] == initial
+    assert mock_filters.call_args.kwargs["final_date"] == final
