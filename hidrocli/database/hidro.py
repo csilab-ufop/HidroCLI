@@ -130,8 +130,6 @@ def create_period_statement(model_name, only_code: bool, with_null_end_date: boo
             statement = select(*columns).where(Station.PeriodoQualAguaInicio.isnot(None))
             if with_null_end_date:
                 statement = statement.where(Station.PeriodoQualAguaFim.is_(None))
-    # print(type(statement))
-    # sqlalchemy.sql.selectable.Select
     return statement
 
 
