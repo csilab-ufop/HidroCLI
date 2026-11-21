@@ -1,8 +1,9 @@
 # <img src="assets/icon.png" alt="HidroCLI icon" width="64" height="64" align="absmiddle"> HidroCLI
 
-[![Release](https://github.com/csilab-ufop/hidrocli/actions/workflows/release.yml/badge.svg)](https://github.com/csilab-ufop/hidrocli/actions/workflows/release.yml)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-BSD--2--Clause-blue)](LICENSE)
+[![Documentation](https://img.shields.io/badge/docs-pydoc--markdown-blue)](https://github.com/csilab-ufop/HidroCLI/wiki)
+[![Release](https://github.com/csilab-ufop/hidrocli/actions/workflows/release.yml/badge.svg)](https://github.com/csilab-ufop/hidrocli/actions/workflows/release.yml)
 
 An python application tool to request and sync data from ANA Hidro WebServices.
 
