@@ -165,7 +165,15 @@ def get_job_model(name: str):
             return SeriesJobs
 
 
-def create_job_filters(job_name: str, status: List[int], last_check: bool, stations=[], max_retries=False) -> List[elements]:
+def create_job_filters(job_name: str, status: List[int], last_check: bool,
+                       stations=[], max_retries=False,
+                       initial_date=None, final_date=None) -> List[elements]:
+    """Build filters for a job table.
+
+    ``initial_date`` and ``final_date`` restrict series jobs to windows fully
+    contained in the requested interval, so legacy jobs outside it are not
+    queued for the current run.
+    """
 
     model   = get_job_model(job_name)
     filters = [model.HidroTable == job_name]
@@ -173,6 +181,10 @@ def create_job_filters(job_name: str, status: List[int], last_check: bool, stati
         filters.append(model.StationID.in_(stations))
     if max_retries:
         filters.append(model.Retries < 3)
+    if initial_date is not None:
+        filters.append(model.FromDate >= initial_date)
+    if final_date is not None:
+        filters.append(model.ToDate <= final_date)
     if status or last_check:
         sub_filters = []
         if status:

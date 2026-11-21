@@ -35,7 +35,7 @@ from concurrent.futures import (
 from threading          import Thread, Lock
 from queue              import Queue
 
-from datetime    import datetime, timedelta
+from datetime    import datetime, timedelta, date
 from enum        import Enum, auto, StrEnum
 from dataclasses import dataclass
 
@@ -51,6 +51,12 @@ SKIP_FOR         = []
 RUN_FOR          = []
 STATIONS         = []
 FILTER           = "DATA_ULTIMA_ATUALIZACAO"
+INITIAL_DATE     = None
+"""Optional initial date override for series jobs."""
+
+FINAL_DATE       = None
+"""Optional final date override for series jobs."""
+
 SAVE_JSON        = False
 READ_JSON        = False
 JSON_DIR         = "json"
@@ -58,12 +64,6 @@ JSON_DIR         = "json"
 
 JOB_CHUNK_SIZE = 5000
 """Minimum number of jobs to accumulate before one bulk insert."""
-
-
-def _batch_size() -> int:
-    """Return the configured write/job chunk size, with a safe default."""
-
-    return max(1, BATCH_SIZE or 1000)
 
 
 class JobConfig:
@@ -138,6 +138,41 @@ class QueueData:
             self.worker_time,
             self.stop_signal
         ))
+
+
+def _batch_size() -> int:
+    """Return the configured write/job chunk size, with a safe default."""
+
+    return max(1, BATCH_SIZE or 1000)
+
+
+def _chunked(items, size: int):
+    """Yield ``items`` in lists of at most ``size`` entries."""
+
+    size = max(1, size)
+    for start in range(0, len(items), size):
+        yield items[start:start + size]
+
+
+def _yesterday() -> datetime:
+    """Return yesterday at midnight."""
+
+    return (datetime.now() - timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+
+
+def _as_datetime(value):
+    """Normalize a database or command-line date, leaving unknown values."""
+
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return datetime.combine(value, datetime.min.time())
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            pass
+    return value
 
 
 from typing import Optional
@@ -222,10 +257,13 @@ def check_series_job(job_config: JobConfig) -> None:
     """
 
     selected    = set(STATIONS)
-    period_data = [
-        data for data in get_period(job_config).all()
-        if not selected or data[0] in selected
-    ]
+    period_data = []
+    for data in get_period(job_config).all():
+        if selected and data[0] not in selected:
+            continue
+        start = INITIAL_DATE if INITIAL_DATE is not None else data[1]
+        end   = FINAL_DATE   if FINAL_DATE   is not None else data[2]
+        period_data.append((data[0], _as_datetime(start), _as_datetime(end)))
 
     if selected:
         missing_stations = selected - {data[0] for data in period_data}
@@ -241,7 +279,14 @@ def check_series_job(job_config: JobConfig) -> None:
         logger.info(f"Creating jobs from {len(missing)} stations for {job_config}")
         create_series_jobs(missing, job_config)
 
-    update_series_job(job_config)
+    if INITIAL_DATE is not None or FINAL_DATE is not None:
+        update_series_job_windows(
+            job_config,
+            [data for data in period_data if data[0] in existing],
+        )
+
+    if FINAL_DATE is None:
+        update_series_job(job_config)
     trigger_series_jobs(job_config)
 
 
@@ -250,7 +295,9 @@ def trigger_series_jobs(job_config: JobConfig) -> None:
 
     status = [JobConfig.Status.FAILED.value, JobConfig.Status.PENDING.value]
     filters = create_job_filters(job_config, status, last_check=False,
-                                 stations=STATIONS, max_retries=True)
+                                 stations=STATIONS, max_retries=True,
+                                 initial_date=INITIAL_DATE,
+                                 final_date=FINAL_DATE)
     count = count_job(job_config, filters)
     if count:
         logger.info(f"Initiating {count} jobs for {job_config}")
@@ -308,39 +355,28 @@ def process_period(station_code, start_date, end_date, job_config):
     Preprocess all years from "Start Date" to "End Date" that will become a job request.
     """
 
-    jobs = []
-    formats = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"]
-    for fmt in formats:
-        try:
-            start_date = datetime.strptime(start_date, fmt)
-            break
-        except Exception as e:
-            continue
+    start_date = _as_datetime(start_date)
+    end_date   = _as_datetime(end_date)
     if end_date is None:
-        end_date = datetime.today() - timedelta(days=1)
-        end_date = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
-    else:
-        for fmt in formats:
-            try:
-                end_date = datetime.strptime(end_date, fmt)
-                break
-            except Exception as e:
-                continue
+        end_date = _yesterday()
 
-    if start_date > end_date:
+    if start_date is None or start_date > end_date:
         logger.verbose(f"Bigger start date {start_date} than end date {end_date} for station {station_code}")
-        jobs.append(SeriesJobs(
+        return [SeriesJobs(
             HidroTable    = job_config,
             StationID     = station_code,
             FromDate      = start_date,
             ToDate        = end_date,
             Status        = JobConfig.Status.CORRUPTED.value,
-        ))
-        return jobs
-    total_years  = max(1, end_date.year - start_date.year)
+        )]
+
+    jobs         = []
     current_year = start_date
-    for count_year in range(1, total_years+1):
-        next_year = current_year.replace(year=current_year.year+1)
+    while current_year < end_date:
+        try:
+            next_year = current_year.replace(year=current_year.year + 1)
+        except ValueError:
+            next_year = current_year.replace(year=current_year.year + 1, day=28)
         if next_year > end_date:
             next_year = end_date
         jobs.append(SeriesJobs(
@@ -350,11 +386,104 @@ def process_period(station_code, start_date, end_date, job_config):
             Status     = JobConfig.Status.PENDING.value,
             HidroTable = job_config
         ))
-        if next_year < end_date:
-            current_year = next_year
-        else:
-            break
+        current_year = next_year
+    if not jobs:
+        jobs.append(SeriesJobs(
+            StationID  = station_code,
+            FromDate   = start_date,
+            ToDate     = end_date,
+            Status     = JobConfig.Status.PENDING.value,
+            HidroTable = job_config
+        ))
     return jobs
+
+
+def _take_job(jobs, predicate):
+    """Remove and return the first job matching ``predicate``."""
+
+    for index, job in enumerate(jobs):
+        if predicate(job):
+            return jobs.pop(index)
+    return None
+
+
+def _reconcile_jobs(jobs, desired_jobs):
+    """Return ``(updates, new_jobs)`` for one station's desired windows."""
+
+    updates, new_jobs = [], []
+    for desired in desired_jobs:
+        if _take_job(jobs, lambda job:
+                     job.FromDate == desired.FromDate and
+                     job.ToDate == desired.ToDate):
+            continue
+
+        match = _take_job(jobs, lambda job:
+                          job.FromDate < desired.ToDate and
+                          job.ToDate > desired.FromDate)
+        if match is None:
+            new_jobs.append(desired)
+        else:
+            updates.append({
+                "ID":       match.ID,
+                "FromDate": desired.FromDate,
+                "ToDate":   desired.ToDate,
+                "Status":   desired.Status,
+                "Retries":  0,
+            })
+    return updates, new_jobs
+
+
+def update_series_job_windows(job_config: JobConfig, stations_data) -> None:
+    """Reconcile existing series jobs with the requested station windows.
+
+    Jobs whose dates already match a desired yearly window are kept
+    untouched. When a window changed, an overlapping job is reused and its
+    dates are updated; if no overlap exists, a new job is inserted. Jobs
+    outside the requested interval are kept but are not queued for this run
+    (see :func:`create_job_filters`).
+    """
+
+    if not stations_data:
+        return
+
+    start_time = time.time()
+    chunk_size = _batch_size()
+    updated    = 0
+    inserted   = 0
+
+    for station_chunk in _chunked(list(stations_data), chunk_size):
+        desired = {
+            station: process_period(station, from_date, to_date, job_config)
+            for station, from_date, to_date in station_chunk
+        }
+        filters = create_job_filters(
+            job_config, [], False, stations=list(desired)
+        )
+        by_station = {}
+        for job in iter_jobs(job_config, filters, chunk_size):
+            by_station.setdefault(job.StationID, []).append(job)
+
+        updates, new_jobs = [], []
+        for station, desired_jobs in desired.items():
+            station_updates, station_new = _reconcile_jobs(
+                by_station.get(station, []), desired_jobs
+            )
+            updates.extend(station_updates)
+            new_jobs.extend(station_new)
+
+        for update_chunk in _chunked(updates, chunk_size):
+            update_job_mappings(job_config, update_chunk)
+        updated += len(updates)
+
+        for job_chunk in _chunked(new_jobs, chunk_size):
+            insert_jobs_bulk(job_chunk)
+        inserted += len(new_jobs)
+
+    elapsed = time.time() - start_time
+    logger.info(
+        f"Updated {updated} and inserted {inserted} jobs for {job_config} "
+        f"in {elapsed:.2f} seconds"
+    )
 
 
 def update_series_job(job_config: JobConfig) -> None:
@@ -364,7 +493,7 @@ def update_series_job(job_config: JobConfig) -> None:
         get_period(job_config, only_code=True, with_null_end_date=True).scalars().all()
         if not selected or code in selected
     ]
-    yesterday   = (datetime.now() - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday   = _yesterday()
     updated     = reset_series_job_dates(job_config, station_ids, yesterday, _batch_size())
     logger.trace(f"Updated {updated} stale jobs for {job_config}")
 
