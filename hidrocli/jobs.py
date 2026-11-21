@@ -238,7 +238,7 @@ def check_series_job(job_config: JobConfig) -> None:
     existing = get_station_ids(job_config, STATIONS)
     missing  = [data for data in period_data if data[0] not in existing]
     if missing:
-        logger.info(f"Creating jobs for {len(missing)} stations of {job_config}")
+        logger.info(f"Creating jobs from {len(missing)} stations for {job_config}")
         create_series_jobs(missing, job_config)
 
     update_series_job(job_config)
