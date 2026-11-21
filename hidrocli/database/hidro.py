@@ -219,15 +219,11 @@ def get_registro_ids(job_name: str, items):
     """Return the local ``RegistroID`` for items already written to Hidro DB.
 
     The result follows the order of ``items`` and contains ``None`` for rows
-    that could not be matched. ``PerfilTransversal`` uses the API-provided
-    identifier as its primary key, so that value is returned directly.
+    that could not be matched.
     """
 
     if not items:
         return []
-
-    if job_name == "PerfilTransversal":
-        return [item.get("Registro_ID") for item in items]
 
     model       = get_hidro_model(job_name)
     verify_keys = get_verify_keys(job_name)
@@ -321,6 +317,6 @@ def get_verify_keys(name: str):
             return {'EstacaoCodigo': 'codigoestacao',
                     'Data': 'Data_Hora_Dado'}
         case "QualAguaStatus":
-            return {'QualAguaID': 'Registro_ID'}
+            return {'QualAguaID': 'QualAguaID'}
         case "PerfilTransversal":
-            return {'RegistroID': 'Registro_ID'}
+            return {'ANA_RegistroID': 'Registro_ID'}

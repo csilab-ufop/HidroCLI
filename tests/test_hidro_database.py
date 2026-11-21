@@ -88,6 +88,18 @@ def test_discharge_summary_verify_keys_cover_the_measurement(hidro_db):
     assert "DataAlt" not in keys
 
 
+def test_cross_section_verify_keys_use_ana_id():
+    assert get_verify_keys("PerfilTransversal") == {
+        "ANA_RegistroID": "Registro_ID",
+    }
+
+
+def test_qual_agua_status_verify_keys_use_internal_id():
+    assert get_verify_keys("QualAguaStatus") == {
+        "QualAguaID": "QualAguaID",
+    }
+
+
 def test_handle_batch_update_keeps_distinct_discharge_measurements(hidro_db):
     insert_hidro([
         DischargeMeasurement(

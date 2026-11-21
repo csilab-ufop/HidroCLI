@@ -468,7 +468,10 @@ def upgrade() -> None:
     sa.UniqueConstraint('Codigo')
     )
     op.create_table('PerfilTransversal',
-    sa.Column('RegistroID', sa.Float(), nullable=False),
+    sa.Column('RegistroID', sa.Integer(), autoincrement=True, nullable=False),
+    sa.Column('DataIns', sa.DateTime(), nullable=True),
+    sa.Column('DataAlt', sa.DateTime(), nullable=True),
+    sa.Column('ANA_RegistroID', sa.Float(), nullable=True),
     sa.Column('EstacaoCodigo', sa.BigInteger(), nullable=True),
     sa.Column('NivelConsistencia', sa.SmallInteger(), nullable=True),
     sa.Column('Data', sa.DateTime(), nullable=True),
@@ -482,7 +485,8 @@ def upgrade() -> None:
     sa.Column('EixoYCotaMinima', sa.Float(), nullable=True),
     sa.Column('ElmGeomPassoCota', sa.Float(), nullable=True),
     sa.Column('Observacoes', sa.String(), nullable=True),
-    sa.PrimaryKeyConstraint('RegistroID')
+    sa.PrimaryKeyConstraint('RegistroID'),
+    sa.UniqueConstraint('ANA_RegistroID', name='uq_cross_section_ana')
     )
     op.create_table('QualAgua',
     sa.Column('n245T', sa.Float(), nullable=True),
@@ -791,7 +795,7 @@ def upgrade() -> None:
     sa.UniqueConstraint('EstacaoCodigo', 'Data', name='uq_flow_rate')
     )
     op.create_table('PerfilTransversalVert',
-    sa.Column('PerfilTransversalID', sa.Float(), nullable=False),
+    sa.Column('PerfilTransversalID', sa.Integer(), nullable=False),
     sa.Column('Cota', sa.Float(), nullable=True),
     sa.Column('Distancia', sa.Float(), nullable=True),
     sa.Column('RegistroID', sa.Integer(), autoincrement=True, nullable=False),

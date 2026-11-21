@@ -35,7 +35,8 @@ from hidrocli.jobs import (
 )
 from hidrocli.models.client import ClientBase, JobRecords
 from hidrocli.models.hidro import (
-    Basin, HidroBase, Rain, VerticalCrossSection,
+    Basin, CrossSection, HidroBase, Rain, VerticalCrossSection,
+    WaterQuality, WaterQualityStatus,
 )
 
 setup_logger()
@@ -191,8 +192,12 @@ def test_write_data_records_cross_section_verticals(hidro_db, client_db):
 
     hidro_session = hidro_db.get_session()
     try:
+        cross_section = hidro_session.query(CrossSection).one()
+        parent_id = cross_section.RegistroID
+        assert cross_section.ANA_RegistroID == 67386491.0
         vertical = hidro_session.query(VerticalCrossSection).one()
         vertical_id = vertical.RegistroID
+        assert vertical.PerfilTransversalID == parent_id
     finally:
         hidro_session.close()
 
@@ -203,13 +208,97 @@ def test_write_data_records_cross_section_verticals(hidro_db, client_db):
             for record in session.query(JobRecords).all()
         }
         assert set(records) == {"PerfilTransversal", "PerfilTransversalVert"}
-        assert records["PerfilTransversal"].DataID == 67386491.0
+        assert records["PerfilTransversal"].DataID == parent_id
         assert records["PerfilTransversalVert"].DataID == vertical_id
         for record in records.values():
             assert record.JobID == 11
             assert record.JobName == "PerfilTransversal"
     finally:
         session.close()
+
+
+def test_cross_section_skips_missing_ana_id(hidro_db, client_db):
+    item = {
+        "codigoestacao":      1,
+        "Nivel_Consistencia": 1,
+        "Data_Hora_Medicao":  datetime(2024, 1, 1),
+        "Num_Levantamento":   1,
+        "Tipo_Secao":         1,
+        "Num_Verticais":      1,
+        "Distancia_pipf":     10.0,
+        "Eixo_X_Dist_Maxima": 10.0,
+        "Eixo_X_Dist_Minima": 0.0,
+        "Eixo_Y_Cota_Maxima": 100.0,
+        "Eixo_Y_Cota_Minima": 0.0,
+        "Elm_Geom_Passo_Cota": 10.0,
+        "Observacoes":        "",
+        "Cota":               50.0,
+        "Distancia":          5.0,
+        "_JobID":             11,
+    }
+
+    write_data(JobConfig.Series.CROSS_SECTION, [], [dict(item)])
+
+    hidro_session = hidro_db.get_session()
+    try:
+        assert hidro_session.query(CrossSection).count() == 0
+        assert hidro_session.query(VerticalCrossSection).count() == 0
+    finally:
+        hidro_session.close()
+
+
+def test_cross_section_keeps_distinct_ana_ids_with_same_natural_key(
+        hidro_db, client_db):
+    def item(ana_id, registro_id, cota, distancia):
+        return {
+            "Registro_ID":        ana_id,
+            "codigoestacao":      1,
+            "Nivel_Consistencia": 1,
+            "Data_Hora_Medicao":  datetime(2024, 1, 1),
+            "Num_Levantamento":   1,
+            "Tipo_Secao":         1,
+            "Num_Verticais":      1,
+            "Distancia_pipf":     10.0,
+            "Eixo_X_Dist_Maxima": 10.0,
+            "Eixo_X_Dist_Minima": 0.0,
+            "Eixo_Y_Cota_Maxima": 100.0,
+            "Eixo_Y_Cota_Minima": 0.0,
+            "Elm_Geom_Passo_Cota": 10.0,
+            "Observacoes":        "",
+            "Cota":               cota,
+            "Distancia":          distancia,
+            "_JobID":             registro_id,
+        }
+
+    write_data(JobConfig.Series.CROSS_SECTION, [], [
+        item(111.0, 1, 50.0, 5.0),
+        item(222.0, 2, 60.0, 6.0),
+    ])
+
+    hidro_session = hidro_db.get_session()
+    try:
+        assert hidro_session.query(CrossSection).count() == 2
+        assert hidro_session.query(VerticalCrossSection).count() == 2
+    finally:
+        hidro_session.close()
+
+
+def test_water_quality_status_uses_local_qual_agua_id(hidro_db, client_db):
+    item = {
+        "codigoestacao":  1,
+        "Data_Hora_Dado": datetime(2024, 1, 1),
+        "_JobID":         9,
+    }
+
+    write_data(JobConfig.Series.WATER_QUALITY, [], [dict(item)])
+
+    hidro_session = hidro_db.get_session()
+    try:
+        measurement = hidro_session.query(WaterQuality).one()
+        status = hidro_session.query(WaterQualityStatus).one()
+        assert status.QualAguaID == measurement.RegistroID
+    finally:
+        hidro_session.close()
 
 
 def test_filter_repeated_discharge_summary_ignores_job_tag():

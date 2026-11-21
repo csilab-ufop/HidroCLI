@@ -89,7 +89,7 @@ def upgrade() -> None:
     sa.Column('JobID', sa.Integer(), nullable=False),
     sa.Column('JobName', sa.String(), nullable=False),
     sa.Column('DataTable', sa.String(), nullable=False),
-    sa.Column('DataID', sa.Float(), nullable=False),
+    sa.Column('DataID', sa.BigInteger(), nullable=False),
     sa.Column('DataIns', sa.DateTime(), nullable=True),
     sa.Column('DataAlt', sa.DateTime(), nullable=True),
     sa.PrimaryKeyConstraint('RegistroID'),

@@ -22,6 +22,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from datetime import datetime
+
 import pytest
 from hidrocli.models.hidro import *
 from hidrocli.models.hidro import Granulometry
@@ -35,6 +37,44 @@ def test_granulometry_maps_inicial_and_final_times_in_order():
 
     assert sample.HoraInicial == "08:30:00"
     assert sample.HoraFinal   == "09:45:00"
+
+
+def test_cross_section_keeps_ana_id_as_audit_data():
+    sample = CrossSection.from_json({
+        "Registro_ID":        67386491.0,
+        "codigoestacao":      1,
+        "Nivel_Consistencia": 1,
+        "Data_Hora_Medicao":  datetime(2024, 1, 1),
+        "Data_Ultima_Alteracao": datetime(2024, 2, 1),
+        "Num_Levantamento":   1,
+    })
+
+    assert sample.RegistroID is None
+    assert sample.ANA_RegistroID == 67386491.0
+    assert sample.DataAlt == datetime(2024, 2, 1)
+
+
+def test_vertical_cross_section_uses_internal_parent_id():
+    sample = VerticalCrossSection.from_json({
+        "Registro_ID": 67386491.0,
+        "Cota":        50.0,
+        "Distancia":   5.0,
+    }, 7)
+
+    assert sample.PerfilTransversalID == 7
+    assert sample.Cota == 50.0
+    assert sample.Distancia == 5.0
+
+
+def test_water_quality_status_uses_qual_agua_id():
+    sample = WaterQualityStatus.from_json({
+        "Registro_ID": 67386491.0,
+        "QualAguaID":  5,
+        "1_Status":    1,
+    })
+
+    assert sample.QualAguaID == 5
+    assert sample.QualAgua001Status == 1
 
 
 def test_dummy():

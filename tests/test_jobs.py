@@ -327,6 +327,50 @@ def test_handle_job_request_skips_unauthorized(mock_token, mock_request,
     mock_queue.put.assert_not_called()
 
 
+def test_filter_cross_section_returns_empty_without_ana_id():
+    items = [{"codigoestacao": 1}]
+
+    filtered = hidrocli.jobs.filter_repeated_series_items(
+        hidrocli.jobs.JobConfig.Series.CROSS_SECTION, items
+    )
+
+    assert filtered == []
+
+
+def test_validate_cross_section_allows_missing_ana_id():
+    item = {
+        "Cota":               50.0,
+        "Data_Hora_Medicao":  datetime(2024, 1, 1),
+        "Data_Ultima_Alteracao": None,
+        "Distancia":          5.0,
+        "Distancia_pipf":     10.0,
+        "Eixo_X_Dist_Maxima": 10.0,
+        "Eixo_X_Dist_Minima": 0.0,
+        "Eixo_Y_Cota_Maxima": 100.0,
+        "Eixo_Y_Cota_Minima": 0.0,
+        "Elm_Geom_Passo_Cota": 10.0,
+        "Nivel_Consistencia": 1,
+        "Num_Levantamento":   1,
+        "Num_Verticais":      1,
+        "Observacoes":        "",
+        "Tipo_Secao":         1,
+        "codigoestacao":      1,
+        "verticais":          [],
+    }
+    job = MagicMock()
+    job.ID = 1
+    job.Status = hidrocli.jobs.JobConfig.Status.PENDING.value
+    job.Retries = 0
+
+    valid = hidrocli.jobs.validate_series_items(
+        job, hidrocli.jobs.JobConfig.Series.CROSS_SECTION, [item]
+    )
+
+    assert valid == [item]
+    assert job.Status == hidrocli.jobs.JobConfig.Status.PENDING.value
+    assert job.Retries == 0
+
+
 @patch('hidrocli.jobs.reset_series_job_dates', return_value=3)
 @patch('hidrocli.jobs.get_period')
 def test_update_series_job_uses_bulk_reset(mock_period, mock_reset,

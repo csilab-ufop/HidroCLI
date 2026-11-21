@@ -614,13 +614,13 @@ def write_data(job_config: JobConfig, jobs: List[HidroJob], items) -> float:
                     lookup.update(get_qual_agua_ids(missing))
 
                 for item in filtered_items:
-                    item['Registro_ID'] = lookup.get(
+                    item['QualAguaID'] = lookup.get(
                         (item['codigoestacao'], item['Data_Hora_Dado'])
                     )
 
                 status_items = [
                     item for item in filtered_items
-                    if item.get('Registro_ID') is not None
+                    if item.get('QualAguaID') is not None
                 ]
                 if status_items:
                     water_status_entries = handle_batch_update(
@@ -634,17 +634,32 @@ def write_data(job_config: JobConfig, jobs: List[HidroJob], items) -> float:
                 entries = handle_batch_update(job_config, filtered_items)
                 if entries:
                     insert_hidro(entries, False)
-                _record_provenance(job_config, job_config, filtered_items)
 
-                vertical_entries = [
-                    VerticalCrossSection.from_json(item) for item in items
+                parent_ids = get_registro_ids(str(job_config), filtered_items)
+                _record_provenance(
+                    job_config, job_config, filtered_items, parent_ids)
+
+                parent_by_key = dict(zip(
+                    (item['Registro_ID'] for item in filtered_items),
+                    parent_ids,
+                ))
+                vertical_items = [
+                    item for item in items
+                    if item.get('Registro_ID') in parent_by_key
                 ]
+                vertical_entries = [
+                    VerticalCrossSection.from_json(
+                        item, parent_by_key[item['Registro_ID']]
+                    )
+                    for item in vertical_items
+                ]
+
                 if vertical_entries:
                     inserted = insert_hidro(vertical_entries, False)
                     _record_provenance(
                         job_config,
                         "PerfilTransversalVert",
-                        items,
+                        vertical_items,
                         [entry.RegistroID for entry in inserted],
                     )
 
@@ -660,6 +675,7 @@ def write_data(job_config: JobConfig, jobs: List[HidroJob], items) -> float:
 def validate_series_items(job, job_config: JobConfig, items):
     """Validate if returned data by the API has the expected lenght and keys. """
 
+    optional_keys = []
     match job_config:
         case JobConfig.Series.RAIN:
             dict_len = 76
@@ -695,8 +711,9 @@ def validate_series_items(job, job_config: JobConfig, items):
         case JobConfig.Series.CROSS_SECTION:
             dict_len = 18
             expected_keys = [
-                "Registro_ID", "codigoestacao", "Nivel_Consistencia", "Data_Hora_Medicao", "Num_Levantamento", "Tipo_Secao", "Num_Verticais", "Distancia_pipf", "Eixo_X_Dist_Maxima", "Eixo_X_Dist_Minima", "Eixo_Y_Cota_Maxima", "Eixo_Y_Cota_Minima", "Elm_Geom_Passo_Cota", "Observacoes"
+                "codigoestacao", "Nivel_Consistencia", "Data_Hora_Medicao", "Num_Levantamento", "Tipo_Secao", "Num_Verticais", "Distancia_pipf", "Eixo_X_Dist_Maxima", "Eixo_X_Dist_Minima", "Eixo_Y_Cota_Maxima", "Eixo_Y_Cota_Minima", "Elm_Geom_Passo_Cota", "Observacoes"
             ]
+            optional_keys = ["Registro_ID"]
         case JobConfig.Series.WATER_QUALITY:
             dict_len = 303
             expected_keys = [
@@ -718,10 +735,11 @@ def validate_series_items(job, job_config: JobConfig, items):
                 expected_keys.append(f"Vazao_{i:02d}")
                 expected_keys.append(f"Vazao_{i:02d}_Status")
 
+    min_len = dict_len - len(optional_keys)
     valid = []
     for index, item in enumerate(items):
-        if len(item) != dict_len:
-            logger.verbose(f"[VALIDATE LEN Job {job.ID}] Item index {index} has length {len(item)}, expected {dict_len}")
+        if len(item) < min_len or len(item) > dict_len:
+            logger.verbose(f"[VALIDATE LEN Job {job.ID}] Item index {index} has length {len(item)}, expected {min_len} to {dict_len}")
             continue
         if not all(key in item for key in expected_keys):
             missing = ', '.join([key for key in expected_keys if key not in item])
@@ -801,7 +819,9 @@ def filter_repeated_series_items(job_config: JobConfig, items):
                     key = (item['codigoestacao'], item['Numero_Curva'],
                            item['Periodo_Validade_Inicio'], item['Periodo_Validade_Fim'])
                 case JobConfig.Series.CROSS_SECTION:
-                    key = (item['Registro_ID'])
+                    key = item.get('Registro_ID')
+                    if key is None:
+                        continue
             if key not in seen:
                 seen.add(key)
                 filtered.append(item)
@@ -812,10 +832,7 @@ def filter_repeated_series_items(job_config: JobConfig, items):
             logger.error(f"[FILTER] Error at index {index}: {e}")
             pass
 
-    if filtered:
-        items = filtered
-
-    return items
+    return filtered
 
 
 def convert_json_items(job_config, items):

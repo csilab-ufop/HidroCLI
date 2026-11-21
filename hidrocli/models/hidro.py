@@ -1708,7 +1708,7 @@ class WaterQualityStatus(HidroBaseModel):
     @classmethod
     def from_json(cls, json_data: dict):
         kwargs = {}
-        kwargs["QualAguaID"] = json_data.get("Registro_ID")
+        kwargs["QualAguaID"] = json_data.get("QualAguaID")
         for i in range(1, 148):
             kwargs[f"QualAgua{i:03d}Status"] = json_data.get(f"{i}_Status")
 
@@ -2212,13 +2212,16 @@ class Granulometry(HidroBaseModel):
         )
 
 
-class CrossSection(HidroBase):
+class CrossSection(HidroBaseModel):
     """ Database model for storing Cross Section data. """
 
     __tablename__ = 'PerfilTransversal'
+    __table_args__ = (
+        UniqueConstraint('ANA_RegistroID', name='uq_cross_section_ana'),
+    )
 
-    RegistroID        = Column(Float, primary_key=True)
-    """ int: unique record identifier. """
+    ANA_RegistroID    = Column(Float)
+    """ float: ANA record identifier used as the external business key. """
 
     EstacaoCodigo     = Column(BigInteger)
     """int: station code identifier of the record."""
@@ -2269,10 +2272,11 @@ class CrossSection(HidroBase):
     @classmethod
     def from_json(cls, json_data: dict):
         return cls(
-            RegistroID        = json_data.get("Registro_ID"),
+            ANA_RegistroID    = json_data.get("Registro_ID"),
             EstacaoCodigo     = json_data.get("codigoestacao"),
             NivelConsistencia = json_data.get("Nivel_Consistencia"),
             Data              = json_data.get("Data_Hora_Medicao"),
+            DataAlt           = json_data.get("Data_Ultima_Alteracao"),
             NumLevantamento   = json_data.get("Num_Levantamento"),
             TipoSecao         = json_data.get("Tipo_Secao"),
             NumVerticais      = json_data.get("Num_Verticais"),
@@ -2291,7 +2295,7 @@ class VerticalCrossSection(HidroBaseModel):
 
     __tablename__ = 'PerfilTransversalVert'
 
-    PerfilTransversalID = Column(Float, ForeignKey("PerfilTransversal.RegistroID"), nullable=False)
+    PerfilTransversalID = Column(Integer, ForeignKey("PerfilTransversal.RegistroID"), nullable=False)
     """ int: foreign key to PerfilTransversal.RegistroID. """
 
     Cota                = Column(Float)
@@ -2302,9 +2306,9 @@ class VerticalCrossSection(HidroBaseModel):
 
 
     @classmethod
-    def from_json(cls, json_data: dict):
+    def from_json(cls, json_data: dict, perfil_transversal_id: int):
         return cls(
-            PerfilTransversalID = json_data.get("Registro_ID"),
+            PerfilTransversalID = perfil_transversal_id,
             Cota                = json_data.get("Cota"),
             Distancia           = json_data.get("Distancia")
         )

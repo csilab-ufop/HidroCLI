@@ -26,7 +26,7 @@
 from sqlalchemy import (
     Column, Integer, String,
     DateTime, ForeignKey, BigInteger,
-    SmallInteger, Float, UniqueConstraint, Index
+    SmallInteger, UniqueConstraint, Index
 )
 from sqlalchemy.orm import declarative_base
 from datetime import datetime
@@ -220,8 +220,8 @@ class JobRecords(ClientBase):
     DataTable  = Column(String, nullable=False)
     """ string: Hidro table that contains the returned data. """
 
-    DataID     = Column(Float, nullable=False)
-    """ float: local RegistroID of the returned row (float for PerfilTransversal). """
+    DataID     = Column(BigInteger, nullable=False)
+    """ int: local RegistroID of the returned row. """
 
     DataIns    = Column(DateTime, default=datetime.now)
     """ datetime: date the mapping was first created. """
