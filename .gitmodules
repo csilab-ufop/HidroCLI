@@ -1,3 +1,3 @@
 [submodule "wiki"]
 	path = hidrocli_docs/wiki
-	url = https://github.com/csiufop/hidrocli.wiki.git
+	url = https://github.com/csilab-ufop/hidrocli.wiki.git
