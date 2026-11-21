@@ -29,9 +29,28 @@ Provides general config to HidroCLI application.
 import logging
 import re
 
-LOG_LEVEL   = None
-HIDRO_PATH  = None
-CLIENT_PATH = None
+LOG_LEVEL    = None
+HIDRO_PATH   = None
+CLIENT_PATH  = None
+
+_DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+
+
+def _parse_date(value):
+    """Parse a command-line date in the ``yyyy-mm-dd`` format."""
+
+    import argparse
+    from datetime import datetime
+
+    try:
+        if not _DATE_RE.fullmatch(value):
+            raise ValueError
+        return datetime.strptime(value, '%Y-%m-%d')
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"invalid date '{value}', expected format yyyy-mm-dd"
+        ) from None
+
 
 def setup_arguments():
     """ Setup command line arguments. """
@@ -78,6 +97,14 @@ def setup_arguments():
                         choices=FILTERS,
                         help='Date filter sent to the API (default: DATA_ULTIMA_ATUALIZACAO)')
 
+    parser.add_argument('--initial-date', type=_parse_date, default=None,
+                        metavar='YYYY-MM-DD',
+                        help='Initial date for series jobs; defaults to each station period start')
+
+    parser.add_argument('--final-date', type=_parse_date, default=None,
+                        metavar='YYYY-MM-DD',
+                        help='Final date for series jobs; defaults to each station period end')
+
     parser.add_argument('--save-json', action='store_true', default=False,
                         help='Save raw JSON payloads retrieved from the API')
 
@@ -88,6 +115,10 @@ def setup_arguments():
                         help='Directory where raw JSON payloads are read from and saved')
 
     args = parser.parse_args()
+
+    if (args.initial_date is not None and args.final_date is not None and
+            args.initial_date > args.final_date):
+        parser.error('--initial-date must be on or before --final-date')
 
     global LOG_LEVEL, HIDRO_PATH, CLIENT_PATH
     LOG_LEVEL   = args.log_level
@@ -102,6 +133,8 @@ def setup_arguments():
     jobs.MAX_WORKERS         = args.max_workers
     jobs.BATCH_SIZE          = args.batch_size
     jobs.FILTER              = args.filter
+    jobs.INITIAL_DATE        = args.initial_date
+    jobs.FINAL_DATE          = args.final_date
     jobs.SAVE_JSON           = args.save_json
     jobs.READ_JSON           = args.read_json
     jobs.JSON_DIR            = args.json_dir
