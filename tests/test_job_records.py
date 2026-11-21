@@ -283,6 +283,50 @@ def test_cross_section_keeps_distinct_ana_ids_with_same_natural_key(
         hidro_session.close()
 
 
+def test_cross_section_keeps_every_level_of_one_ana_id(hidro_db):
+    def level(cota, distancia):
+        return {
+            "Registro_ID":        67386491.0,
+            "codigoestacao":      1,
+            "Nivel_Consistencia": 1,
+            "Data_Hora_Medicao":  datetime(2024, 1, 1),
+            "Num_Levantamento":   1,
+            "Tipo_Secao":         1,
+            "Num_Verticais":      3,
+            "Distancia_pipf":     10.0,
+            "Eixo_X_Dist_Maxima": 10.0,
+            "Eixo_X_Dist_Minima": 0.0,
+            "Eixo_Y_Cota_Maxima": 100.0,
+            "Eixo_Y_Cota_Minima": 0.0,
+            "Elm_Geom_Passo_Cota": 10.0,
+            "Observacoes":        "",
+            "Cota":               cota,
+            "Distancia":          distancia,
+        }
+
+    write_data(JobConfig.Series.CROSS_SECTION, [], [
+        level(1449.0, 0.0),
+        level(1450.0, 20.0),
+        level(1438.0, 21.0),
+    ])
+
+    hidro_session = hidro_db.get_session()
+    try:
+        cross_section = hidro_session.query(CrossSection).one()
+        verticals = hidro_session.query(VerticalCrossSection).all()
+        assert len(verticals) == 3
+        assert {
+            (vertical.PerfilTransversalID, vertical.Cota, vertical.Distancia)
+            for vertical in verticals
+        } == {
+            (cross_section.RegistroID, 1449.0, 0.0),
+            (cross_section.RegistroID, 1450.0, 20.0),
+            (cross_section.RegistroID, 1438.0, 21.0),
+        }
+    finally:
+        hidro_session.close()
+
+
 def test_water_quality_status_uses_local_qual_agua_id(hidro_db, client_db):
     item = {
         "codigoestacao":  1,
