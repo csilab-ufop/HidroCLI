@@ -45,12 +45,26 @@ from hidrocli.database.hidro  import *
 from hidrocli.webservices import *
 
 MAX_WORKERS      = None
+"""Maximum number of worker threads used for parallel requests."""
+
 BATCH_SIZE       = None
+"""Number of accumulated records or jobs that triggers a database write."""
+
 SKIP_SERIES_JOBS = False
+"""Skip every series job when true."""
+
 SKIP_FOR         = []
+"""Series jobs to skip, by name."""
+
 RUN_FOR          = []
+"""Series jobs to run; empty means every job not skipped."""
+
 STATIONS         = []
+"""Station codes used to restrict series jobs; empty means every station."""
+
 FILTER           = "DATA_ULTIMA_ATUALIZACAO"
+"""Date field used to filter ANA series requests."""
+
 INITIAL_DATE     = None
 """Optional initial date override for series jobs."""
 
@@ -58,8 +72,13 @@ FINAL_DATE       = None
 """Optional final date override for series jobs."""
 
 SAVE_JSON        = False
+"""Save raw API responses as JSON files."""
+
 READ_JSON        = False
+"""Reuse cached JSON responses instead of requesting the API."""
+
 JSON_DIR         = "json"
+"""Directory used for cached JSON payloads."""
 
 
 JOB_CHUNK_SIZE = 5000
