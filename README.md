@@ -48,6 +48,7 @@ usage: hidrocli [-h] [--hidro HIDRO] [--client CLIENT]
                 [--run-for [{Chuvas,ResumoDescarga,Sedimentos,Cotas,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal} ...]]
                 [--stations [STATIONS ...]]
                 [--filter {DATA_LEITURA,DATA_ULTIMA_ATUALIZACAO}]
+                [--initial-date YYYY-MM-DD] [--final-date YYYY-MM-DD]
                 [--save-json] [--read-json] [--json-dir JSON_DIR]
 
 options:
@@ -72,6 +73,12 @@ options:
   --filter {DATA_LEITURA,DATA_ULTIMA_ATUALIZACAO}
                         Date filter sent to the API (default:
                         DATA_ULTIMA_ATUALIZACAO)
+  --initial-date YYYY-MM-DD
+                        Initial date for series jobs; defaults to each station
+                        period start
+  --final-date YYYY-MM-DD
+                        Final date for series jobs; defaults to each station
+                        period end
   --save-json           Save raw JSON payloads retrieved from the API
   --read-json           Read raw JSON payloads from the JSON directory before
                         requesting the API
