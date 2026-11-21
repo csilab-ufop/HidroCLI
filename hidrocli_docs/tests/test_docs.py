@@ -59,6 +59,14 @@ def test_replace_help_block_is_idempotent(tmp_path):
     assert path.read_text() == first
 
 
+def test_client_page_includes_job_records():
+    models = docs.read_models(docs.CLIENT_MODEL_FILE)
+
+    page = docs.build_client_page(models)
+
+    assert "JobRecords" in page
+
+
 def test_replace_help_block_rejects_missing_heading(tmp_path):
     path = tmp_path / "README.md"
     path.write_text("## Other\n\n```\nstale\n```\n")

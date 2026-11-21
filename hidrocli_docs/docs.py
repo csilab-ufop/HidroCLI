@@ -655,6 +655,12 @@ CLIENT_JOBS = [
         "Jobs that request a station time-series window. Includes the shared `HidroJob` fields.",
         "seriesjobs",
     ),
+    (
+        "JobRecords",
+        "JobRecords",
+        "Maps each written Hidro data row to the latest job that produced it.",
+        "jobrecords",
+    ),
 ]
 
 CLIENT_INFO = {

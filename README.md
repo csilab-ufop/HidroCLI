@@ -42,13 +42,13 @@ An python application tool to request and sync data from ANA Hidro WebServices.
 ```
 usage: hidrocli [-h] [--hidro HIDRO] [--client CLIENT]
                 [--max-workers MAX_WORKERS] [--batch-size BATCH_SIZE]
-                [--log-level {TRACE,VERBOSE,DEBUG,INFO,WARNING,ERROR}]
+                [--log-level {TRACE,VERBOSE,DEBUG,INFO,WARNING,ERROR,NONE}]
                 [--skip-series-jobs]
                 [--skip-for [{Chuvas,ResumoDescarga,Sedimentos,Cotas,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal} ...]]
                 [--run-for [{Chuvas,ResumoDescarga,Sedimentos,Cotas,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal} ...]]
                 [--stations [STATIONS ...]]
                 [--filter {DATA_LEITURA,DATA_ULTIMA_ATUALIZACAO}]
-                [--save-json] [--json-dir JSON_DIR]
+                [--save-json] [--read-json] [--json-dir JSON_DIR]
 
 options:
   -h, --help            show this help message and exit
@@ -59,8 +59,8 @@ options:
   --batch-size BATCH_SIZE
                         Batch size threshold to write job data on Hidro
                         Database
-  --log-level {TRACE,VERBOSE,DEBUG,INFO,WARNING,ERROR}
-                        Set logging level
+  --log-level {TRACE,VERBOSE,DEBUG,INFO,WARNING,ERROR,NONE}
+                        Set logging level (NONE disables all logging)
   --skip-series-jobs    Skip all series jobs when present
   --skip-for [{Chuvas,ResumoDescarga,Sedimentos,Cotas,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal} ...]
                         Skip job creation and requesition for the given
@@ -73,7 +73,10 @@ options:
                         Date filter sent to the API (default:
                         DATA_ULTIMA_ATUALIZACAO)
   --save-json           Save raw JSON payloads retrieved from the API
-  --json-dir JSON_DIR   Directory where raw JSON payloads are saved
+  --read-json           Read raw JSON payloads from the JSON directory before
+                        requesting the API
+  --json-dir JSON_DIR   Directory where raw JSON payloads are read from and
+                        saved
 ```
 
 ## Documentation
