@@ -2,10 +2,10 @@
 
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-BSD--2--Clause-blue)](LICENSE)
-[![Documentation](https://img.shields.io/badge/docs-pydoc--markdown-blue)](https://github.com/csilab-ufop/HidroCLI/wiki)
+[![Documentation](https://img.shields.io/badge/docs-wiki-blue)](https://github.com/csilab-ufop/HidroCLI/wiki)
 [![Release](https://github.com/csilab-ufop/hidrocli/actions/workflows/release.yml/badge.svg)](https://github.com/csilab-ufop/hidrocli/actions/workflows/release.yml)
 
-An python application tool to request and sync data from ANA Hidro WebServices.
+A Python application tool to request and sync data from ANA Hidro WebServices.
 
 ## Installation
 
@@ -44,8 +44,8 @@ usage: hidrocli [-h] [--hidro HIDRO] [--client CLIENT]
                 [--max-workers MAX_WORKERS] [--batch-size BATCH_SIZE]
                 [--log-level {TRACE,VERBOSE,DEBUG,INFO,WARNING,ERROR,NONE}]
                 [--skip-series-jobs]
-                [--skip-for [{Chuvas,ResumoDescarga,Sedimentos,Cotas,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal} ...]]
-                [--run-for [{Chuvas,ResumoDescarga,Sedimentos,Cotas,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal} ...]]
+                [--skip-for [{Chuvas,ResumoDescarga,Sedimentos,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal,Cotas} ...]]
+                [--run-for [{Chuvas,ResumoDescarga,Sedimentos,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal,Cotas} ...]]
                 [--stations [STATIONS ...]]
                 [--filter {DATA_LEITURA,DATA_ULTIMA_ATUALIZACAO}]
                 [--initial-date YYYY-MM-DD] [--final-date YYYY-MM-DD]
@@ -63,10 +63,10 @@ options:
   --log-level {TRACE,VERBOSE,DEBUG,INFO,WARNING,ERROR,NONE}
                         Set logging level (NONE disables all logging)
   --skip-series-jobs    Skip all series jobs when present
-  --skip-for [{Chuvas,ResumoDescarga,Sedimentos,Cotas,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal} ...]
+  --skip-for [{Chuvas,ResumoDescarga,Sedimentos,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal,Cotas} ...]
                         Skip job creation and requesition for the given
                         choices
-  --run-for [{Chuvas,ResumoDescarga,Sedimentos,Cotas,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal} ...]
+  --run-for [{Chuvas,ResumoDescarga,Sedimentos,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal,Cotas} ...]
                         Runs only the choosen Jobs
   --stations [STATIONS ...]
                         Station codes to filter series jobs
@@ -88,12 +88,4 @@ options:
 
 ## Documentation
 
-- [Config](https://github.com/csilab-ufop/hidrocli/wiki/config)
-- [Hidro Models](https://github.com/csilab-ufop/hidrocli/wiki/hidro-models)
-- [Client Models](https://github.com/csilab-ufop/hidrocli/wiki/client-models)
-- [Hidro Database](https://github.com/csilab-ufop/hidrocli/wiki/hidro-database)
-- [Client Database](https://github.com/csilab-ufop/hidrocli/wiki/client-database)
-- [Jobs](https://github.com/csilab-ufop/hidrocli/wiki/jobs)
-- [WebServices](https://github.com/csilab-ufop/hidrocli/wiki/webservices)
-- [Database Migration](https://github.com/csilab-ufop/HidroCLI/wiki/migration)
-- [Use Cases](https://github.com/csilab-ufop/hidrocli/wiki/Use-Cases)
+- [HidroCLI Wiki](https://github.com/csilab-ufop/HidroCLI/wiki)
