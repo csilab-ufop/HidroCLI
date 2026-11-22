@@ -30,11 +30,48 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base
 from datetime import datetime
+from enum import Enum, StrEnum
 
 ClientBase = declarative_base()
 
 FILTERS = ("DATA_LEITURA", "DATA_ULTIMA_ATUALIZACAO")
 """Date filters accepted by the ANA series endpoints."""
+
+
+class JobStatus(Enum):
+    """Result status of a persistent job-queue entry."""
+
+    PENDING   = 1
+    FAILED    = 2
+    INVALID   = 3
+    CORRUPTED = 4
+    COMPLETED = 5
+
+
+class BaseTables(StrEnum):
+    """Reference tables loaded once (plus the station inventory)."""
+
+    BASIN     = "Bacia"
+    SUB_BASIN = "SubBacia"
+    ENTITY    = "Entidade"
+    TOWNSHIP  = "Municipio"
+    RIVER     = "Rio"
+    STATE     = "Estado"
+    STATION   = "Estacao"
+
+
+class SeriesTables(StrEnum):
+    """Station time-series tables loaded per window."""
+
+    RAIN              = "Chuvas"
+    DISCHARGE_SUMMARY = "ResumoDescarga"
+    SEDIMENTS         = "Sedimentos"
+    FLOW_RATE         = "Vazoes"
+    GRANULOMETRY      = "Granulometria"
+    DISCHARGE_FLOW    = "CurvaDescarga"
+    WATER_QUALITY     = "QualAgua"
+    CROSS_SECTION     = "PerfilTransversal"
+    STAGE             = "Cotas"
 
 class Credentials(ClientBase):
     """ Client authentication credentials.
