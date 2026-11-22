@@ -50,6 +50,7 @@ usage: hidrocli [-h] [--hidro HIDRO] [--client CLIENT]
                 [--filter {DATA_LEITURA,DATA_ULTIMA_ATUALIZACAO}]
                 [--initial-date YYYY-MM-DD] [--final-date YYYY-MM-DD]
                 [--save-json] [--read-json] [--json-dir JSON_DIR]
+                [--trace-records]
 
 options:
   -h, --help            show this help message and exit
@@ -84,6 +85,7 @@ options:
                         requesting the API
   --json-dir JSON_DIR   Directory where raw JSON payloads are read from and
                         saved
+  --trace-records       Save JobRecords provenance for written data rows
 ```
 
 ## Documentation
