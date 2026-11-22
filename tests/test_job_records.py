@@ -27,6 +27,8 @@ from unittest.mock import patch
 
 import pytest
 
+import hidrocli.jobs.runner
+
 from hidrocli.config import setup_logger
 from hidrocli.database import DatabaseType, _setup_db
 from hidrocli.database.client import upsert_job_records
@@ -60,6 +62,11 @@ def client_db(tmp_path):
         connection.close()
 
 
+@pytest.fixture
+def trace_records(monkeypatch):
+    monkeypatch.setattr(hidrocli.jobs.runner, "TRACE_RECORDS", True)
+
+
 def test_upsert_job_records_updates_latest_job(client_db):
     upsert_job_records([{
         "JobID":     1,
@@ -85,7 +92,7 @@ def test_upsert_job_records_updates_latest_job(client_db):
         session.close()
 
 
-def test_write_data_records_base_provenance(hidro_db, client_db):
+def test_write_data_records_base_provenance(hidro_db, client_db, trace_records):
     item = {
         "codigobacia": 1,
         "Nome_Bacia":  "Test basin",
@@ -112,7 +119,25 @@ def test_write_data_records_base_provenance(hidro_db, client_db):
         session.close()
 
 
-def test_write_data_records_series_provenance(hidro_db, client_db):
+def test_write_data_skips_provenance_when_trace_disabled(
+        hidro_db, client_db, monkeypatch):
+    monkeypatch.setattr(hidrocli.jobs.runner, "TRACE_RECORDS", False)
+    item = {
+        "codigobacia": 1,
+        "Nome_Bacia":  "Test basin",
+        "_JobID":      5,
+    }
+
+    write_data(JobConfig.Base.BASIN, [], normalize_items("Bacia", [dict(item)]))
+
+    session = client_db.get_session()
+    try:
+        assert session.query(JobRecords).count() == 0
+    finally:
+        session.close()
+
+
+def test_write_data_records_series_provenance(hidro_db, client_db, trace_records):
     item = {
         "codigoestacao":  1,
         "Data_Hora_Dado": datetime(2024, 1, 1),
@@ -145,7 +170,7 @@ def test_write_data_records_series_provenance(hidro_db, client_db):
         session.close()
 
 
-def test_write_data_records_water_quality_status_provenance(hidro_db, client_db):
+def test_write_data_records_water_quality_status_provenance(hidro_db, client_db, trace_records):
     item = {
         "codigoestacao":  1,
         "Data_Hora_Dado": datetime(2024, 1, 1),
@@ -167,7 +192,7 @@ def test_write_data_records_water_quality_status_provenance(hidro_db, client_db)
         session.close()
 
 
-def test_write_data_records_cross_section_verticals(hidro_db, client_db):
+def test_write_data_records_cross_section_verticals(hidro_db, client_db, trace_records):
     item = {
         "Registro_ID":        67386491.0,
         "codigoestacao":      1,

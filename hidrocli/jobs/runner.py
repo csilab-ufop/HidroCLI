@@ -96,6 +96,9 @@ READ_JSON        = False
 JSON_DIR         = "json"
 """Directory used for cached JSON payloads."""
 
+TRACE_RECORDS    = False
+"""Save JobRecords provenance for each written data row."""
+
 
 JOB_CHUNK_SIZE = 5000
 """Minimum number of jobs to accumulate before one bulk insert."""
@@ -644,10 +647,10 @@ def _record_provenance(job_config, data_table, items, data_ids=None):
 
     Items written by the API pipeline carry a private ``_JobID`` tag. The
     helper is a no-op for direct calls without that tag, such as the
-    round-trip tests.
+    round-trip tests, and for runs where ``TRACE_RECORDS`` is disabled.
     """
 
-    if not items:
+    if not TRACE_RECORDS or not items:
         return
 
     if data_ids is None:

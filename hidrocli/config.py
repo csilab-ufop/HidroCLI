@@ -112,6 +112,9 @@ def setup_arguments():
     parser.add_argument('--json-dir', type=str, default='json',
                         help='Directory where raw JSON payloads are read from and saved')
 
+    parser.add_argument('--trace-records', action='store_true', default=False,
+                        help='Save JobRecords provenance for written data rows')
+
     args = parser.parse_args()
 
     if (args.initial_date is not None and args.final_date is not None and
@@ -136,6 +139,7 @@ def setup_arguments():
     jobs.SAVE_JSON           = args.save_json
     jobs.READ_JSON           = args.read_json
     jobs.JSON_DIR            = args.json_dir
+    jobs.TRACE_RECORDS       = args.trace_records
 
 
 def setup_logger():

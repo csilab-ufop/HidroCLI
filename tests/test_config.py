@@ -45,6 +45,7 @@ def test_setup_arguments_defaults():
         assert hidrocli.jobs.runner.SAVE_JSON     is False
         assert hidrocli.jobs.runner.READ_JSON     is False
         assert hidrocli.jobs.runner.JSON_DIR      == 'json'
+        assert hidrocli.jobs.runner.TRACE_RECORDS is False
 
 
 def test_setup_arguments_custum():
@@ -108,6 +109,18 @@ def test_setup_arguments_read_json_flag():
 
         assert hidrocli.jobs.runner.READ_JSON is True
         assert hidrocli.jobs.runner.JSON_DIR  == 'custom/json'
+
+
+def test_setup_arguments_trace_records_flag():
+    test_arguments = ['script_name',
+                      '--trace-records']
+
+    with patch('sys.argv', test_arguments):
+        import hidrocli.jobs.runner
+
+        hidrocli.config.setup_arguments()
+
+        assert hidrocli.jobs.runner.TRACE_RECORDS is True
 
 
 def test_setup_arguments_accepts_none_log_level():
