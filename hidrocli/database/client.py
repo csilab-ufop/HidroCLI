@@ -153,16 +153,9 @@ def upsert_job_records(records: List[dict]) -> int:
 
 
 def get_job_model(name: str):
-    match name:
-        case ("Bacia"     | "SubBacia" | "Entidade" |
-              "Municipio" | "Rio"      | "Estado"):
-            return BaseJobs
-        case "Estacao":
-            return StationJobs
-        case ("Chuvas"        | "ResumoDescarga"    | "CurvaDescarga" |
-              "Sedimentos"    | "QualAgua"          | "Cotas"         |
-              "Granulometria" | "PerfilTransversal" | "Vazoes"):
-            return SeriesJobs
+    """Return the Client job-queue model for a job name (from the registry)."""
+    from hidrocli.database import get_job_model as _registry_job_model
+    return _registry_job_model(name)
 
 
 def create_job_filters(job_name: str, status: List[int], last_check: bool,
@@ -213,7 +206,7 @@ def count_job_by_status(job_name: str):
     client_session = CLIENT_DB.get_session()
     model          = get_job_model(job_name)
     count_jobs     = (client_session.query(model.Status, func.count(model.ID).label('count'))
-                      .filter(model.HidroTable == job_name, model.Status != 4)
+                      .filter(model.HidroTable == job_name, model.Status != JobStatus.CORRUPTED.value)
                       .group_by(model.Status).order_by(model.Status).all())
     client_session.close()
     return count_jobs
@@ -241,6 +234,18 @@ def insert_jobs(jobs: List[HidroJob]) -> None:
     client_session.add_all(jobs)
     client_session.commit()
     client_session.close()
+
+
+def make_series_job(station_id, from_date, to_date, status, hidro_table):
+    """Build a series job instance for a station/time window."""
+
+    return SeriesJobs(
+        StationID  = station_id,
+        FromDate   = from_date,
+        ToDate     = to_date,
+        Status     = status,
+        HidroTable = hidro_table,
+    )
 
 
 def update_jobs(jobs: List[HidroJob], job_name: str) -> None:
@@ -347,11 +352,7 @@ def update_job_mappings(job_name: str, mappings: List[dict]) -> None:
 
 def reset_series_job_dates(job_name: str, station_ids, to_date,
                            chunk_size: int = 1000) -> int:
-    """Reset stale yearly series jobs to ``to_date`` with ORM bulk updates.
-
-    Status codes are kept as integers because importing ``jobs.JobConfig``
-    here would create a circular import.
-    """
+    """Reset stale yearly series jobs to ``to_date`` with ORM bulk updates."""
 
     station_ids = list(station_ids)
     if not station_ids:
@@ -367,12 +368,12 @@ def reset_series_job_dates(job_name: str, station_ids, to_date,
             updated += client_session.query(SeriesJobs).filter(
                 SeriesJobs.HidroTable == job_name,
                 SeriesJobs.StationID.in_(chunk),
-                SeriesJobs.Status != 4,
+                SeriesJobs.Status != JobStatus.CORRUPTED.value,
                 SeriesJobs.ToDate < to_date,
                 (func.julianday(SeriesJobs.ToDate)
                  - func.julianday(SeriesJobs.FromDate)) < 365,
             ).update({
-                SeriesJobs.Status: 1,
+                SeriesJobs.Status: JobStatus.PENDING.value,
                 SeriesJobs.ToDate: to_date,
             }, synchronize_session=False)
             client_session.commit()

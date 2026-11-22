@@ -22,11 +22,23 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from sqlalchemy     import create_engine
+from sqlalchemy     import create_engine, UniqueConstraint
 from sqlalchemy.orm import sessionmaker, Session
 
 from enum import StrEnum
 from pathlib import Path
+from typing import NamedTuple
+
+from hidrocli.models.client import (
+    BaseJobs, StationJobs, SeriesJobs, HidroJob, Token, JobStatus,
+    BaseTables, SeriesTables,
+)
+from hidrocli.models.hidro import (
+    HidroBase, Basin, SubBasin, Entity, Township, River, State, Station,
+    Rain, DischargeMeasurement, Sediments, Stage, RatingCurve,
+    WaterQuality, WaterQualityStatus, Granulometry, CrossSection,
+    VerticalCrossSection, FlowRate,
+)
 
 class DatabaseType(StrEnum):
     """
@@ -81,3 +93,71 @@ def init_db(hidro_path, client_path) -> None:
 
     hidro.HIDRO_DB   = _setup_db(hidro_path, DatabaseType.HIDRO)
     client.CLIENT_DB = _setup_db(client_path, DatabaseType.CLIENT)
+
+
+# ---------------------------------------------------------------------------
+# Model metadata.
+#
+# The database layer is the only place that knows the ORM models: it maps a job
+# name to its Hidro model and client job-queue model, and describes each model's
+# upsert identity and station observation period. The job-level registry in
+# ``hidrocli.jobs`` receives this metadata from here.
+# ---------------------------------------------------------------------------
+
+_HIDRO_BY_TABLE = {
+    mapper.class_.__tablename__: mapper.class_
+    for mapper in HidroBase.registry.mappers
+}
+
+
+_BASE_NAMES   = {table.value for table in BaseTables}
+_SERIES_NAMES = {table.value for table in SeriesTables}
+
+def get_hidro_model(name: str):
+    """Return the Hidro ORM model for a job/table name."""
+    return _HIDRO_BY_TABLE[name]
+
+
+def get_job_model(name: str):
+    """Return the Client job-queue model for a job name (or ``None``)."""
+    if name == BaseTables.STATION:
+        return StationJobs
+    if name in _BASE_NAMES:
+        return BaseJobs
+    if name in _SERIES_NAMES:
+        return SeriesJobs
+    return None
+
+
+def unique_keys(name: str) -> tuple:
+    """Return a job's row identity from the ORM constraints.
+
+    Uses the unique constraint (ignoring the ``DataAlt`` audit column) or, when
+    there is none, the foreign key columns.
+    """
+    table = get_hidro_model(name).__table__
+    for constraint in table.constraints:
+        if isinstance(constraint, UniqueConstraint):
+            return tuple(c.name for c in constraint.columns if c.name != "DataAlt")
+    return tuple(c.name for c in table.columns if c.foreign_keys)
+
+
+def get_verify_keys(name: str) -> dict:
+    """Return the upsert identity as ``{attribute: attribute}``."""
+    return {attr: attr for attr in unique_keys(name)}
+
+
+def get_station_period(name: str):
+    """Return the ``(start, end)`` ``Station`` attribute names for a series job."""
+    return get_hidro_model(name).__table__.info.get("station_period")
+
+
+def get_field_names(name: str) -> list:
+    """Return the attribute names mapped from a job's ANA payload."""
+    model = get_hidro_model(name)
+    return [col.key for col in model.__table__.columns if "ana" in col.info]
+
+
+def job_names() -> list:
+    """Return every known job/table name."""
+    return list(_HIDRO_BY_TABLE)
