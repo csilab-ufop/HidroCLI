@@ -31,20 +31,20 @@ def test_setup_arguments_defaults():
     """Test default argument values"""
 
     with patch('sys.argv', ['script_name']):
-        import hidrocli.jobs
+        import hidrocli.jobs.runner
         hidrocli.config.setup_arguments()
         assert hidrocli.config.LOG_LEVEL   == 'INFO'
         assert hidrocli.config.CLIENT_PATH == 'db/client.db'
         assert hidrocli.config.HIDRO_PATH  == 'db/hidro.db'
-        assert hidrocli.jobs.MAX_WORKERS   == 10
-        assert hidrocli.jobs.BATCH_SIZE    == 1000
-        assert hidrocli.jobs.FILTER        == 'DATA_ULTIMA_ATUALIZACAO'
-        assert hidrocli.jobs.STATIONS      == []
-        assert hidrocli.jobs.INITIAL_DATE  is None
-        assert hidrocli.jobs.FINAL_DATE    is None
-        assert hidrocli.jobs.SAVE_JSON     is False
-        assert hidrocli.jobs.READ_JSON     is False
-        assert hidrocli.jobs.JSON_DIR      == 'json'
+        assert hidrocli.jobs.runner.MAX_WORKERS   == 10
+        assert hidrocli.jobs.runner.BATCH_SIZE    == 1000
+        assert hidrocli.jobs.runner.FILTER        == 'DATA_ULTIMA_ATUALIZACAO'
+        assert hidrocli.jobs.runner.STATIONS      == []
+        assert hidrocli.jobs.runner.INITIAL_DATE  is None
+        assert hidrocli.jobs.runner.FINAL_DATE    is None
+        assert hidrocli.jobs.runner.SAVE_JSON     is False
+        assert hidrocli.jobs.runner.READ_JSON     is False
+        assert hidrocli.jobs.runner.JSON_DIR      == 'json'
 
 
 def test_setup_arguments_custum():
@@ -58,14 +58,14 @@ def test_setup_arguments_custum():
                       '--client',      'custom/client.db']
 
     with patch('sys.argv', test_arguments):
-        import hidrocli.jobs, hidrocli.database
+        import hidrocli.jobs.runner, hidrocli.database
 
         hidrocli.config.setup_arguments()
         assert hidrocli.config.LOG_LEVEL   == 'DEBUG'
         assert hidrocli.config.CLIENT_PATH == 'custom/client.db'
         assert hidrocli.config.HIDRO_PATH  == 'custom/hidro.db'
-        assert hidrocli.jobs.MAX_WORKERS   == 5
-        assert hidrocli.jobs.BATCH_SIZE    == 500
+        assert hidrocli.jobs.runner.MAX_WORKERS   == 5
+        assert hidrocli.jobs.runner.BATCH_SIZE    == 500
 
 
 def test_setup_arguments_filter_and_integer_stations():
@@ -74,12 +74,12 @@ def test_setup_arguments_filter_and_integer_stations():
                       '--filter',   'DATA_LEITURA']
 
     with patch('sys.argv', test_arguments):
-        import hidrocli.jobs
+        import hidrocli.jobs.runner
 
         hidrocli.config.setup_arguments()
 
-        assert hidrocli.jobs.STATIONS == [111, 222]
-        assert hidrocli.jobs.FILTER   == 'DATA_LEITURA'
+        assert hidrocli.jobs.runner.STATIONS == [111, 222]
+        assert hidrocli.jobs.runner.FILTER   == 'DATA_LEITURA'
 
 
 def test_setup_arguments_save_json_flags():
@@ -88,12 +88,12 @@ def test_setup_arguments_save_json_flags():
                       '--json-dir', 'custom/json']
 
     with patch('sys.argv', test_arguments):
-        import hidrocli.jobs
+        import hidrocli.jobs.runner
 
         hidrocli.config.setup_arguments()
 
-        assert hidrocli.jobs.SAVE_JSON is True
-        assert hidrocli.jobs.JSON_DIR  == 'custom/json'
+        assert hidrocli.jobs.runner.SAVE_JSON is True
+        assert hidrocli.jobs.runner.JSON_DIR  == 'custom/json'
 
 
 def test_setup_arguments_read_json_flag():
@@ -102,12 +102,12 @@ def test_setup_arguments_read_json_flag():
                       '--json-dir', 'custom/json']
 
     with patch('sys.argv', test_arguments):
-        import hidrocli.jobs
+        import hidrocli.jobs.runner
 
         hidrocli.config.setup_arguments()
 
-        assert hidrocli.jobs.READ_JSON is True
-        assert hidrocli.jobs.JSON_DIR  == 'custom/json'
+        assert hidrocli.jobs.runner.READ_JSON is True
+        assert hidrocli.jobs.runner.JSON_DIR  == 'custom/json'
 
 
 def test_setup_arguments_accepts_none_log_level():
@@ -175,10 +175,10 @@ def test_setup_logger_creates_custom_levels(caplog):
 
 def test_setup_arguments_parses_initial_and_final_dates(monkeypatch):
     from datetime import datetime
-    import hidrocli.jobs
+    import hidrocli.jobs.runner
 
-    monkeypatch.setattr(hidrocli.jobs, "INITIAL_DATE", None)
-    monkeypatch.setattr(hidrocli.jobs, "FINAL_DATE", None)
+    monkeypatch.setattr(hidrocli.jobs.runner, "INITIAL_DATE", None)
+    monkeypatch.setattr(hidrocli.jobs.runner, "FINAL_DATE", None)
 
     test_arguments = ['script_name',
                       '--initial-date', '2020-01-01',
@@ -187,8 +187,8 @@ def test_setup_arguments_parses_initial_and_final_dates(monkeypatch):
     with patch('sys.argv', test_arguments):
         hidrocli.config.setup_arguments()
 
-    assert hidrocli.jobs.INITIAL_DATE == datetime(2020, 1, 1)
-    assert hidrocli.jobs.FINAL_DATE   == datetime(2020, 12, 31)
+    assert hidrocli.jobs.runner.INITIAL_DATE == datetime(2020, 1, 1)
+    assert hidrocli.jobs.runner.FINAL_DATE   == datetime(2020, 12, 31)
 
 
 def test_setup_arguments_rejects_invalid_date_format():

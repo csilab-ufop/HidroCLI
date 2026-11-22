@@ -453,7 +453,7 @@ def test_create_job_filters_restricts_to_requested_date_window(client_db):
 
 
 def test_update_series_job_windows_updates_overlap_in_database(client_db):
-    from hidrocli.jobs import JobConfig, update_series_job_windows
+    from hidrocli.jobs.runner import JobConfig, update_series_job_windows
 
     insert_jobs([
         SeriesJobs(

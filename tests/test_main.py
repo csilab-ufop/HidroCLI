@@ -28,7 +28,7 @@ from unittest.mock import patch
 import hidrocli.__main__ as entry
 
 
-@patch('hidrocli.jobs.run')
+@patch('hidrocli.jobs.runner.run')
 @patch('hidrocli.config.setup_database')
 @patch('hidrocli.config.setup_logger')
 @patch('hidrocli.config.setup_arguments')

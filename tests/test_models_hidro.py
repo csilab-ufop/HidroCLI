@@ -31,8 +31,8 @@ from hidrocli.models.hidro import Granulometry
 
 def test_granulometry_maps_inicial_and_final_times_in_order():
     sample = Granulometry.from_json({
-        "Hora_Inicial": "08:30:00",
-        "Hora_Final":   "09:45:00",
+        "HoraInicial": "08:30:00",
+        "HoraFinal":   "09:45:00",
     })
 
     assert sample.HoraInicial == "08:30:00"
@@ -41,12 +41,12 @@ def test_granulometry_maps_inicial_and_final_times_in_order():
 
 def test_cross_section_keeps_ana_id_as_audit_data():
     sample = CrossSection.from_json({
-        "Registro_ID":        67386491.0,
-        "codigoestacao":      1,
-        "Nivel_Consistencia": 1,
-        "Data_Hora_Medicao":  datetime(2024, 1, 1),
-        "Data_Ultima_Alteracao": datetime(2024, 2, 1),
-        "Num_Levantamento":   1,
+        "ANA_RegistroID":        67386491.0,
+        "EstacaoCodigo":         1,
+        "NivelConsistencia":     1,
+        "Data":                  datetime(2024, 1, 1),
+        "DataAlt":               datetime(2024, 2, 1),
+        "NumLevantamento":       1,
     })
 
     assert sample.RegistroID is None
@@ -68,9 +68,8 @@ def test_vertical_cross_section_uses_internal_parent_id():
 
 def test_water_quality_status_uses_qual_agua_id():
     sample = WaterQualityStatus.from_json({
-        "Registro_ID": 67386491.0,
-        "QualAguaID":  5,
-        "1_Status":    1,
+        "QualAguaID":          5,
+        "QualAgua001Status":   1,
     })
 
     assert sample.QualAguaID == 5
