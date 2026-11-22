@@ -59,13 +59,3 @@ contents = ['webservices.*']
 title    = "Config"
 name     = "config"
 contents = ['config.*']
-
-[[tool.pydoc-markdown.renderer.pages]]
-title    = "Client Models"
-name     = "client models"
-contents = ['models.client.*']
-
-[[tool.pydoc-markdown.renderer.pages]]
-title    = "Hidro Models"
-name     = "hidro models"
-contents = ['models.hidro.*']

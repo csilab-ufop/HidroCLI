@@ -77,3 +77,77 @@ def test_replace_help_block_rejects_missing_heading(tmp_path):
             "## Usage",
             (sys.executable, "-c", "print('usage: demo')"),
         )
+
+
+def _fields(model):
+    return [field for group in model.groups for field in group.fields]
+
+
+def test_read_models_captures_ana_and_keys():
+    models = docs.read_models(docs.MODEL_FILE)
+    by_class = {m.class_name: m for m in models}
+
+    station = {f.name: f for f in _fields(by_class["Station"])}
+    assert station["Codigo"].ana == "codigoestacao"
+    assert station["Codigo"].unique is True
+
+    shared = {f.name: f for f in _fields(by_class["HidroBaseModel"])}
+    assert shared["RegistroID"].primary_key is True
+
+    status = {f.name: f for f in _fields(by_class["WaterQualityStatus"])}
+    assert status["QualAguaID"].foreign_key == "QualAgua.RegistroID"
+    assert status["QualAguaID"].nullable is False
+
+
+def test_build_page_links_to_per_model_pages():
+    models = docs.read_models(docs.MODEL_FILE)
+    page = docs.build_page(models)
+    assert "```mermaid" in page
+    assert "erDiagram" in page
+    assert "[Estacao](hidro-model-station.md)" in page
+    assert "[Chuvas](hidro-model-rain.md)" in page
+
+
+def test_build_client_page_links_to_per_model_pages():
+    models = docs.read_models(docs.CLIENT_MODEL_FILE)
+    page = docs.build_client_page(models)
+    assert "[JobRecords](client-model-jobrecords.md)" in page
+
+
+def test_render_description_folds_enum_values():
+    out = docs.render_description(
+        "River jurisdiction.\n1 - Federal\n2 - State\n3 - Undefined."
+    )
+    assert "<strong>1</strong>" in out
+    assert "&mdash;" in out
+    assert "<details>" not in out
+
+
+def test_render_model_page_includes_related_links():
+    models = docs.read_models(docs.MODEL_FILE)
+    by_class = docs._hydrate_models(models)
+    page = docs.render_model_page(
+        by_class["WaterQuality"],
+        "hidro-models",
+        "Hidro Models",
+        docs._hidro_related("WaterQuality"),
+    )
+    assert "## Related" in page
+    assert "[QualAguaStatus](hidro-model-waterqualitystatus)" in page
+
+
+def test_generate_sidebar_writes_grouped_nav(tmp_path, monkeypatch):
+    monkeypatch.setattr(docs, "WIKI_DIR", tmp_path)
+    docs.generate_sidebar()
+    text = (tmp_path / "_Sidebar.md").read_text()
+    assert "**Hidro Models**" in text
+    assert "[Overview](hidro-models)" in text
+    assert "[Bacia](hidro-model-basin)" in text
+    assert "[JobRecords](client-model-jobrecords)" in text
+
+
+def test_generate_footer_writes(tmp_path, monkeypatch):
+    monkeypatch.setattr(docs, "WIKI_DIR", tmp_path)
+    docs.generate_footer()
+    text = (tmp_path / "_Footer.md").read_text()
+    assert "hidro-docs" in text

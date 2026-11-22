@@ -67,6 +67,54 @@ CLIENT_MODEL_FILE = ROOT / "hidrocli" / "models" / "client.py"
 OUTPUT_FILE = WIKI_DIR / "hidro models.md"
 CLIENT_OUTPUT_FILE = WIKI_DIR / "client models.md"
 
+# Friendly titles for the pydoc-markdown module pages (keyed by page name).
+MODULE_TITLES = {
+    "config": "Config",
+    "jobs": "Jobs",
+    "webservices": "WebServices",
+    "client database": "Client Database",
+    "hidro database": "Hidro Database",
+}
+
+# Conceptual relationships for the Hidro ER diagram. Relationships are keyed by
+# ``EstacaoCodigo``/``RegistroID``, not database-enforced foreign keys.
+HIDRO_ER = [
+    ("Bacia", "SubBacia", "contains"),
+    ("Bacia", "Rio", "contains"),
+    ("SubBacia", "Rio", "contains"),
+    ("Estado", "Municipio", "contains"),
+    ("Municipio", "Estacao", "locates"),
+    ("Rio", "Estacao", "on"),
+    ("Estacao", "Chuvas", "records"),
+    ("Estacao", "Cotas", "records"),
+    ("Estacao", "Vazoes", "records"),
+    ("Estacao", "ResumoDescarga", "records"),
+    ("Estacao", "Sedimentos", "records"),
+    ("Estacao", "CurvaDescarga", "records"),
+    ("Estacao", "QualAgua", "records"),
+    ("Estacao", "Granulometria", "records"),
+    ("Estacao", "PerfilTransversal", "records"),
+    ("QualAgua", "QualAguaStatus", "status flags"),
+    ("PerfilTransversal", "PerfilTransversalVert", "verticals"),
+]
+
+
+def slugify(text: str) -> str:
+    """Return a lowercase, hyphen-separated slug for *text*."""
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", text.strip()).strip("-").lower()
+    return slug or "page"
+
+
+def hidro_model_filename(class_name: str) -> str:
+    """Wiki page filename for a Hidro model."""
+    return f"hidro-model-{slugify(class_name)}.md"
+
+
+def client_model_filename(class_name: str) -> str:
+    """Wiki page filename for a Client model."""
+    return f"client-model-{slugify(class_name)}.md"
+
+
 HELP_SNIPPETS = (
     (ROOT / "README.md", "## Usage", (sys.executable, "-m", "hidrocli", "--help")),
     (
@@ -98,6 +146,11 @@ class Field:
     type_name: str
     description: str
     markdown_name: bool = False
+    ana: str | None = None
+    primary_key: bool = False
+    foreign_key: str | None = None
+    nullable: bool = True
+    unique: bool = False
 
 
 @dataclass
@@ -154,6 +207,47 @@ def split_doc(doc: str | None, fallback_type: str) -> tuple[str, str]:
     return type_name, description
 
 
+def _literal(node: ast.AST):
+    """Best-effort literal evaluation of an AST node."""
+    try:
+        return ast.literal_eval(node)
+    except (ValueError, SyntaxError, TypeError):
+        return None
+
+
+def _column_flags(value: ast.Call) -> tuple[str | None, bool, str | None, bool, bool]:
+    """Extract (ana, primary_key, foreign_key, nullable, unique) from a Column call."""
+    ana = None
+    primary_key = False
+    foreign_key = None
+    nullable = True
+    unique = False
+
+    for kw in value.keywords:
+        if kw.arg == "info":
+            info = _literal(kw.value)
+            if isinstance(info, dict):
+                ana = info.get("ana")
+        elif kw.arg == "primary_key":
+            primary_key = bool(_literal(kw.value))
+        elif kw.arg == "nullable":
+            nullable = bool(_literal(kw.value))
+        elif kw.arg == "unique":
+            unique = bool(_literal(kw.value))
+
+    for arg in value.args:
+        if (
+            isinstance(arg, ast.Call)
+            and isinstance(arg.func, ast.Name)
+            and arg.func.id == "ForeignKey"
+        ):
+            target = _literal(arg.args[0]) if arg.args else None
+            if isinstance(target, str):
+                foreign_key = target
+
+    return ana, primary_key, foreign_key, nullable, unique
+
+
 def read_models(path: Path) -> list[Model]:
     tree = ast.parse(path.read_text())
     models: list[Model] = []
@@ -200,11 +294,17 @@ def read_models(path: Path) -> list[Model]:
                 doc = doc_node.value.value
 
             type_name, description = split_doc(doc, column_type(value))
+            ana, primary_key, foreign_key, nullable, unique = _column_flags(value)
             fields.append(
                 Field(
                     name=stmt.targets[0].id,
                     type_name=type_name,
                     description=description,
+                    ana=ana,
+                    primary_key=primary_key,
+                    foreign_key=foreign_key,
+                    nullable=nullable,
+                    unique=unique,
                 )
             )
 
@@ -494,24 +594,68 @@ GROUP_RULES: dict[str, list[tuple[str, Callable[[str], bool], bool]]] = {
 }
 
 
-def escape_cell(text: str) -> str:
-    parts = [html.escape(line, quote=False).replace("|", "\\|") for line in text.split("\n")]
-    return "<br>".join(parts)
+ENUM_ENTRY = re.compile(r"^\s*(\d+)\s*[-–—]\s*(.+?)\s*$")
+
+
+def render_description(text: str) -> str:
+    """Render a field description, folding trailing ``N - value`` enum lines."""
+    escaped = [
+        html.escape(line, quote=False).replace("|", "\\|")
+        for line in text.split("\n")
+    ]
+    if not escaped:
+        return "—"
+    first_enum = next(
+        (index for index, line in enumerate(escaped) if ENUM_ENTRY.match(line)),
+        None,
+    )
+    if first_enum is None:
+        return "<br>".join(escaped)
+
+    lead = "<br>".join(escaped[:first_enum])
+    values = "<br>".join(
+        f"<strong>{match.group(1)}</strong> &mdash; {match.group(2)}"
+        for line in escaped[first_enum:]
+        if (match := ENUM_ENTRY.match(line))
+    )
+    return f"{lead}<br>{values}" if lead else values
+
+
+def key_badges(item: Field) -> str:
+    badges: list[str] = []
+    if item.primary_key:
+        badges.append("PK")
+    if item.foreign_key:
+        badges.append("FK")
+    if item.unique:
+        badges.append("UQ")
+    if not item.nullable:
+        badges.append("NOT NULL")
+    return " · ".join(badges) if badges else "—"
 
 
 def field_table(fields: list[Field]) -> list[str]:
-    lines = ["| Field | Type | Description |", "| :--- | :--- | :--- |"]
+    lines = [
+        "| Field | Type | ANA | Key | Description |",
+        "| :--- | :--- | :--- | :--- | :--- |",
+    ]
     for item in fields:
         name = item.name if item.markdown_name else f"`{item.name}`"
-        description = escape_cell(item.description)
-        lines.append(f"| {name} | `{item.type_name}` | {description} |")
+        description = render_description(item.description)
+        if item.ana:
+            ana = f"`{html.escape(str(item.ana), quote=False).replace('|', '\\|')}`"
+        else:
+            ana = "—"
+        lines.append(
+            f"| {name} | `{item.type_name}` | {ana} | {key_badges(item)} | {description} |"
+        )
     return lines
 
 
-def render_table(model: Model, group: Group) -> list[str]:
+def render_table(model: Model, group: Group, level: int = 4) -> list[str]:
     lines: list[str] = []
     if group.title:
-        lines.append(f"#### {group.title}")
+        lines.append(f"{'#' * level} {group.title}")
         lines.append("")
     fields = group.fields
     if group.collapsible:
@@ -528,9 +672,44 @@ def render_table(model: Model, group: Group) -> list[str]:
     return lines
 
 
-def render_model(model: Model) -> list[str]:
+def er_diagram(relationships: list[tuple[str, str, str]]) -> list[str]:
+    lines = ["```mermaid", "erDiagram"]
+    for source, target, label in relationships:
+        lines.append(f'    {source} ||--o{{ {target} : "{label}"')
+    lines.append("```")
+    return lines
+
+
+def _hidro_related(class_name: str) -> list[tuple[str, str]]:
+    """Return (title, slug) links for models related to *class_name*."""
+    table = MODEL_INFO[class_name][1]
+    if not table:
+        return []
+    table_to_class = {
+        MODEL_INFO[c][1]: c for c in MODEL_INFO if MODEL_INFO[c][1]
+    }
+    related: list[tuple[str, str]] = []
+    for source, target, _ in HIDRO_ER:
+        if source == table and target in table_to_class:
+            related.append((MODEL_INFO[table_to_class[target]][0], hidro_model_filename(table_to_class[target])[:-3]))
+        elif target == table and source in table_to_class:
+            related.append((MODEL_INFO[table_to_class[source]][0], hidro_model_filename(table_to_class[source])[:-3]))
+    return related
+
+
+def render_model_page(
+    model: Model,
+    back_slug: str,
+    back_label: str,
+    related: list[tuple[str, str]] = (),
+) -> str:
     heading = f"{model.title} ({model.class_name})" if model.table else model.title
-    lines = [f"### {heading}", ""]
+    lines = [
+        f"# {heading}",
+        "",
+        f"[← {back_label}]({back_slug})",
+        "",
+    ]
     metadata = f"*Model: `{model.class_name}`"
     if model.table:
         metadata += f" · Table: `{model.table}`"
@@ -538,17 +717,24 @@ def render_model(model: Model) -> list[str]:
     lines.extend([metadata, "", model.description, ""])
 
     for group in model.groups:
-        lines.extend(render_table(model, group))
+        lines.extend(render_table(model, group, level=2))
 
     if model.extra_fields:
-        lines.extend(render_table(model, Group("Generated columns", model.extra_fields)))
+        lines.extend(
+            render_table(model, Group("Generated columns", model.extra_fields), level=2)
+        )
 
-    return lines
+    if related:
+        lines.extend(["## Related", ""])
+        lines.append(" · ".join(f"[{label}]({slug})" for label, slug in related))
+        lines.append("")
+
+    lines.extend(["", f"[← {back_label}]({back_slug})", ""])
+    return "\n".join(lines)
 
 
-def build_page(models: list[Model]) -> str:
+def _hydrate_models(models: list[Model]) -> dict[str, Model]:
     by_class = {model.class_name: model for model in models}
-
     for class_name, model in by_class.items():
         title, table, description, anchor = MODEL_INFO[class_name]
         model.title = title
@@ -557,13 +743,20 @@ def build_page(models: list[Model]) -> str:
         model.anchor = anchor
         rules = GROUP_RULES.get(class_name)
         if rules:
-            model.groups = apply_groups([f for group in model.groups for f in group.fields], rules)
+            model.groups = apply_groups(
+                [f for group in model.groups for f in group.fields], rules
+            )
             for group in model.groups:
                 order = FIELD_ORDER.get((class_name, group.title))
                 if order:
                     position = {name: index for index, name in enumerate(order)}
                     group.fields.sort(key=lambda item: position.get(item.name, len(order)))
         model.extra_fields = EXTRA_FIELDS.get(class_name, [])
+    return by_class
+
+
+def build_page(models: list[Model]) -> str:
+    by_class = _hydrate_models(models)
 
     lines = [
         "# Hidro Models",
@@ -571,21 +764,35 @@ def build_page(models: list[Model]) -> str:
         "ORM models for the Hidro database. Field descriptions follow the ANA HIDRO 1.0 "
         "data dictionary (Manual do Usuário, Apêndice A) and the ANA Hidro WebServices payloads.",
         "",
-        "## Contents",
+        "Each model is documented on its own page. Browse the [shared fields](#shared-fields) "
+        "and the reference and time-series tables below.",
         "",
-        "**Shared**",
-        "",
-        "- [Shared fields](#shared-fields)",
-        "",
-        "**Reference tables**",
+        "## Relationships",
         "",
     ]
-    for class_name, title, _, _, anchor in REFERENCE:
-        lines.append(f"- [{title}](#{anchor})")
+    lines.extend(er_diagram(HIDRO_ER))
+    lines.extend(
+        [
+            "",
+            "Cardinalities are conceptual: relationships are keyed by `EstacaoCodigo` "
+            "and `RegistroID`, not database-enforced foreign keys.",
+            "",
+            "## Contents",
+            "",
+            "**Shared**",
+            "",
+            "- [Shared fields](#shared-fields)",
+            "",
+            "**Reference tables**",
+            "",
+        ]
+    )
+    for class_name, title, _, _, _ in REFERENCE:
+        lines.append(f"- [{title}]({hidro_model_filename(class_name)})")
 
     lines.extend(["", "**Time-series tables**", ""])
-    for class_name, title, _, _, anchor in SERIES:
-        lines.append(f"- [{title}](#{anchor})")
+    for class_name, title, _, _, _ in SERIES:
+        lines.append(f"- [{title}]({hidro_model_filename(class_name)})")
 
     lines.extend(["", "## Shared fields", ""])
     for class_name, _, _, _, _ in SHARED:
@@ -595,14 +802,6 @@ def build_page(models: list[Model]) -> str:
         for group in model.groups:
             lines.extend(field_table(group.fields))
             lines.append("")
-
-    lines.extend(["## Reference tables", ""])
-    for class_name, _, _, _, _ in REFERENCE:
-        lines.extend(render_model(by_class[class_name]))
-
-    lines.extend(["## Time-series tables", ""])
-    for class_name, _, _, _, _ in SERIES:
-        lines.extend(render_model(by_class[class_name]))
 
     lines.extend(
         [
@@ -669,44 +868,41 @@ CLIENT_INFO = {
 }
 
 
-def build_client_page(models: list[Model]) -> str:
+def _hydrate_client_models(models: list[Model]) -> dict[str, Model]:
     by_class = {model.class_name: model for model in models}
-
     for class_name, model in by_class.items():
         title, description, anchor = CLIENT_INFO[class_name]
         model.title = title
         model.table = None
         model.description = description
         model.anchor = anchor
+    return by_class
 
+
+def build_client_page(models: list[Model]) -> str:
     lines = [
         "# Client Models",
         "",
         "ORM models for the local client database. It stores ANA API credentials and "
         "tokens plus the persistent job queue used to synchronize the Hidro database.",
         "",
+        "Each model is documented on its own page.",
+        "",
         "## Contents",
         "",
         "**Authentication**",
         "",
     ]
-    for class_name, title, _, anchor in CLIENT_AUTH:
-        lines.append(f"- [{title}](#{anchor})")
+    for class_name, title, _, _ in CLIENT_AUTH:
+        lines.append(f"- [{title}]({client_model_filename(class_name)})")
 
     lines.extend(["", "**Job queue**", ""])
-    for class_name, title, _, anchor in CLIENT_JOBS:
-        lines.append(f"- [{title}](#{anchor})")
-
-    lines.extend(["", "## Authentication", ""])
-    for class_name, _, _, _ in CLIENT_AUTH:
-        lines.extend(render_model(by_class[class_name]))
-
-    lines.extend(["## Job queue", ""])
-    for class_name, _, _, _ in CLIENT_JOBS:
-        lines.extend(render_model(by_class[class_name]))
+    for class_name, title, _, _ in CLIENT_JOBS:
+        lines.append(f"- [{title}]({client_model_filename(class_name)})")
 
     lines.extend(
         [
+            "",
             "---",
             "",
             "*Generated from `hidrocli/models/client.py` by `hidro-docs`.*",
@@ -716,28 +912,127 @@ def build_client_page(models: list[Model]) -> str:
     return "\n".join(lines)
 
 
+def _remove_stale(directory: Path, prefix: str, keep: set[str]) -> None:
+    """Remove per-model pages that no longer match a model class."""
+    for path in directory.glob(f"{prefix}*.md"):
+        if path.name not in keep:
+            path.unlink()
+            print(f"removed {path}")
+
+
+def _write(path: Path, content: str) -> None:
+    path.write_text(content)
+    print(f"wrote {path}")
+
+
 def generate_models_page() -> None:
-    """Regenerate the curated Hidro models wiki page."""
+    """Regenerate the Hidro models index and one page per model."""
     if not OUTPUT_FILE.parent.is_dir():
         raise SystemExit(
             "wiki directory not found; run "
             "`git submodule update --init hidrocli_docs/wiki` first"
         )
     models = read_models(MODEL_FILE)
-    OUTPUT_FILE.write_text(build_page(models))
-    print(f"wrote {OUTPUT_FILE}")
+    by_class = _hydrate_models(models)
+    _write(OUTPUT_FILE, build_page(models))
+
+    keep = {hidro_model_filename(c) for c, *_ in REFERENCE + SERIES}
+    _remove_stale(WIKI_DIR, "hidro-model-", keep)
+    for class_name, *_ in REFERENCE + SERIES:
+        page = render_model_page(
+            by_class[class_name],
+            "hidro-models",
+            "Hidro Models",
+            _hidro_related(class_name),
+        )
+        _write(WIKI_DIR / hidro_model_filename(class_name), page)
 
 
 def generate_client_models_page() -> None:
-    """Regenerate the curated Client models wiki page."""
+    """Regenerate the Client models index and one page per model."""
     if not CLIENT_OUTPUT_FILE.parent.is_dir():
         raise SystemExit(
             "wiki directory not found; run "
             "`git submodule update --init hidrocli_docs/wiki` first"
         )
     models = read_models(CLIENT_MODEL_FILE)
-    CLIENT_OUTPUT_FILE.write_text(build_client_page(models))
-    print(f"wrote {CLIENT_OUTPUT_FILE}")
+    by_class = _hydrate_client_models(models)
+    _write(CLIENT_OUTPUT_FILE, build_client_page(models))
+
+    keep = {client_model_filename(c) for c, *_ in CLIENT_AUTH + CLIENT_JOBS}
+    _remove_stale(WIKI_DIR, "client-model-", keep)
+    for class_name, *_ in CLIENT_AUTH + CLIENT_JOBS:
+        page = render_model_page(by_class[class_name], "client-models", "Client Models")
+        _write(WIKI_DIR / client_model_filename(class_name), page)
+
+
+def generate_sidebar() -> None:
+    """Write the GitHub wiki sidebar with grouped, nested navigation."""
+    lines = [
+        "**Getting started**",
+        "",
+        "- [Home](Home)",
+        "- [Migration](migration)",
+        "- [Use Cases](Use-Cases)",
+        "",
+        "**Modules**",
+        "",
+        "- [Config](config)",
+        "- [Jobs](jobs)",
+        "- [WebServices](webservices)",
+        "",
+        "**Databases**",
+        "",
+        "- [Hidro Database](hidro-database)",
+        "- [Client Database](client-database)",
+        "",
+        "**Hidro Models**",
+        "",
+        "- [Overview](hidro-models)",
+        "- Reference",
+    ]
+    for class_name, title, *_ in REFERENCE:
+        lines.append(f"  - [{title}]({hidro_model_filename(class_name)[:-3]})")
+    lines.append("- Time-series")
+    for class_name, title, *_ in SERIES:
+        lines.append(f"  - [{title}]({hidro_model_filename(class_name)[:-3]})")
+
+    lines.extend(["", "**Client Models**", "", "- [Overview](client-models)"])
+    for class_name, title, *_ in CLIENT_AUTH:
+        lines.append(f"  - [{title}]({client_model_filename(class_name)[:-3]})")
+    for class_name, title, *_ in CLIENT_JOBS:
+        lines.append(f"  - [{title}]({client_model_filename(class_name)[:-3]})")
+
+    _write(WIKI_DIR / "_Sidebar.md", "\n".join(lines) + "\n")
+
+
+def generate_footer() -> None:
+    """Write the GitHub wiki footer."""
+    footer = "\n".join(
+        [
+            "---",
+            "",
+            "*Generated by `hidro-docs` from the "
+            "[HidroCLI](https://github.com/csilab-ufop/HidroCLI) source. Data sourced "
+            "from [ANA Hidro WebServices](https://www.snirh.gov.br/hidroweb/).*",
+            "",
+        ]
+    )
+    _write(WIKI_DIR / "_Footer.md", footer)
+
+
+def copy_assets() -> None:
+    """Copy repository image assets (e.g. the icon) into the wiki."""
+    src = ROOT / "assets"
+    if not src.is_dir():
+        return
+    dst = WIKI_DIR / "assets"
+    dst.mkdir(exist_ok=True)
+    for item in src.glob("*.png"):
+        target = dst / item.name
+        if not target.is_file() or target.read_bytes() != item.read_bytes():
+            target.write_bytes(item.read_bytes())
+            print(f"copied asset {item.name}")
 
 
 def help_output(command: tuple[str, ...]) -> str:
@@ -842,6 +1137,8 @@ def run_pydoc_markdown() -> None:
 def post_process_wiki() -> None:
     """Add the separator layout used by the generated wiki pages."""
     for path in sorted(WIKI_DIR.glob("*.md")):
+        if path.name.startswith("_"):
+            continue
         text = path.read_text()
         text = re.sub(
             r'(<a id=".*?"></a>\n\n## )',
@@ -862,13 +1159,33 @@ def post_process_wiki() -> None:
         (WIKI_DIR / artifact).unlink(missing_ok=True)
 
 
+def polish_module_pages() -> None:
+    """Give pydoc-markdown module pages a consistent title and clean escapes."""
+    for name, title in MODULE_TITLES.items():
+        path = WIKI_DIR / f"{name}.md"
+        if not path.is_file():
+            continue
+        original = path.read_text()
+        # Rewrite the first H1 (the module name) to a friendlier title.
+        text = re.sub(r"(?m)^#\s+[^\n]+$", f"# {title}", original, count=1)
+        # Unescape underscores pydoc-markdown escapes in headings/signatures.
+        text = text.replace(r"\_", "_")
+        if text != original:
+            path.write_text(text)
+            print(f"polished {path}")
+
+
 def main() -> None:
     """Refresh help snippets, build every wiki page, and regenerate models."""
     update_help_blocks()
     run_pydoc_markdown()
     post_process_wiki()
+    polish_module_pages()
     generate_models_page()
     generate_client_models_page()
+    generate_sidebar()
+    generate_footer()
+    copy_assets()
 
 
 if __name__ == "__main__":
