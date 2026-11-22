@@ -23,6 +23,8 @@
 import logging
 logger = logging.getLogger(__name__)
 
+import json
+from datetime import datetime
 from typing import List
 
 from sqlalchemy import select
@@ -31,30 +33,79 @@ from hidrocli.models.hidro  import *
 
 HIDRO_DB = None
 
-_HIDRO_MODELS_MAP = {
-    "Bacia":                 Basin,
-    "SubBacia":              SubBasin,
-    "Entidade":              Entity,
-    "Municipio":             Township,
-    "Rio":                   River,
-    "Estado":                State,
-    "Estacao":               Station,
-    "Chuvas":                Rain,
-    "ResumoDescarga":        DischargeMeasurement,
-    "CurvaDescarga":         RatingCurve,
-    "Sedimentos":            Sediments,
-    "QualAgua":              WaterQuality,
-    "QualAguaStatus":        WaterQualityStatus,
-    "Cotas":                 Stage,
-    "Granulometria":         Granulometry,
-    "PerfilTransversal":     CrossSection,
-    "PerfilTransversalVert": VerticalCrossSection,
-    "Vazoes":                FlowRate,
-}
+from hidrocli.database import get_hidro_model, get_verify_keys, get_station_period
+
+_DATE_FORMATS = ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%H:%M:%S")
 
 
-def get_hidro_model(name: str):
-    return _HIDRO_MODELS_MAP[name]
+def coerce_value(value):
+    """Best-effort JSON/date coercion for a raw ANA value."""
+
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            for fmt in _DATE_FORMATS:
+                try:
+                    return datetime.strptime(value, fmt)
+                except ValueError:
+                    continue
+    return value
+
+
+def _station_type(value):
+    match value:
+        case "Fluviometrica":
+            return 1
+        case "Pluviometrica":
+            return 2
+        case _:
+            raise ValueError(f"Unknown station type: {value}")
+
+
+def _ana_fields(model):
+    """Return ``(attribute, ana_key)`` for every column that declares one."""
+
+    return [
+        (column.key, column.info["ana"])
+        for column in model.__table__.columns
+        if "ana" in column.info
+    ]
+
+
+def normalize_items(job_name, items):
+    """Rename ANA keys to model attributes and coerce types in one pass."""
+
+    if isinstance(items, dict):
+        items = [items]
+
+    model  = get_hidro_model(job_name)
+    fields = _ana_fields(model)
+
+    if job_name == "QualAgua":
+        fields += [
+            (attr, key)
+            for attr, key in _ana_fields(get_hidro_model("QualAguaStatus"))
+            if key != "QualAguaID"
+        ]
+    if job_name == "PerfilTransversal":
+        fields += [("Cota", "Cota"), ("Distancia", "Distancia")]
+
+    normalized = []
+    for item in items:
+        row = {
+            key: value for key, value in item.items()
+            if str(key).startswith("_")
+        }
+        row.update({
+            attr: coerce_value(item[key])
+            for attr, key in fields
+            if key is not None and key in item
+        })
+        if job_name == "Estacao":
+            row["TipoEstacao"] = _station_type(item.get("Tipo_Estacao"))
+        normalized.append(row)
+    return normalized
 
 
 def insert_hidro(collection: List[HidroBase], expire = True) -> List[HidroBase]:
@@ -67,6 +118,12 @@ def insert_hidro(collection: List[HidroBase], expire = True) -> List[HidroBase]:
     hidro_session.commit()
     hidro_session.close()
     return collection
+
+
+def make_vertical_cross_section(item: dict, parent_id: int):
+    """Build a vertical cross-section row linked to its parent section."""
+
+    return VerticalCrossSection.from_json(item, parent_id)
 
 
 def count_hidro(model: HidroBase):
@@ -99,37 +156,14 @@ def get_period(model_name: str, only_code=False, with_null_end_date=False):
 
 def create_period_statement(model_name, only_code: bool, with_null_end_date: bool):
     columns = [Station.Codigo]
-    match model_name:
-        case "Chuvas":
-            if not only_code:
-                columns.extend([Station.PeriodoRegistradorChuvaInicio, Station.PeriodoRegistradorChuvaFim])
-            statement = select(*columns).where(Station.PeriodoRegistradorChuvaInicio.isnot(None))
-            if with_null_end_date:
-                statement = statement.where(Station.PeriodoRegistradorChuvaFim.is_(None))
-        case ("ResumoDescarga" | "CurvaDescarga" | "PerfilTransversal" | "Vazoes"):
-            if not only_code:
-                columns.extend([Station.PeriodoDescLiquidaInicio, Station.PeriodoDescLiquidaFim])
-            statement = select(*columns).where(Station.PeriodoDescLiquidaInicio.isnot(None))
-            if with_null_end_date:
-                statement = statement.where(Station.PeriodoDescLiquidaFim.is_(None))
-        case ("Sedimentos" | "Granulometria"):
-            if not only_code:
-                columns.extend([Station.PeriodoSedimentosInicio, Station.PeriodoSedimentosFim])
-            statement = select(*columns).where(Station.PeriodoSedimentosInicio.isnot(None))
-            if with_null_end_date:
-                statement = statement.where(Station.PeriodoSedimentosFim.is_(None))
-        case "Cotas":
-            if not only_code:
-                columns.extend([Station.PeriodoRegistradorNivelInicio, Station.PeriodoRegistradorNivelFim])
-            statement = select(*columns).where(Station.PeriodoRegistradorNivelInicio.isnot(None))
-            if with_null_end_date:
-                statement = statement.where(Station.PeriodoRegistradorNivelFim.is_(None))
-        case "QualAgua":
-            if not only_code:
-                columns.extend([Station.PeriodoQualAguaInicio, Station.PeriodoQualAguaFim])
-            statement = select(*columns).where(Station.PeriodoQualAguaInicio.isnot(None))
-            if with_null_end_date:
-                statement = statement.where(Station.PeriodoQualAguaFim.is_(None))
+    start_col, end_col = (
+        getattr(Station, attr) for attr in get_station_period(model_name)
+    )
+    if not only_code:
+        columns.extend([start_col, end_col])
+    statement = select(*columns).where(start_col.isnot(None))
+    if with_null_end_date:
+        statement = statement.where(end_col.is_(None))
     return statement
 
 
@@ -174,10 +208,10 @@ def handle_batch_update(job_name: str, items):
             chunk = items[start:start + chunk_size]
 
             filters = [
-                getattr(model, model_key).in_(
-                    [item.get(json_key) for item in chunk]
+                getattr(model, attr).in_(
+                    [item.get(attr) for item in chunk]
                 )
-                for model_key, json_key in verify_keys.items()
+                for attr in verify_keys
             ]
             rows = (
                 hidro_session.query(model.RegistroID, *key_columns)
@@ -188,7 +222,7 @@ def handle_batch_update(job_name: str, items):
 
             updates = []
             for item in chunk:
-                key = tuple(item.get(verify_keys[k]) for k in verify_keys)
+                key = tuple(item.get(attr) for attr in verify_keys)
                 if key in processed:
                     continue
                 processed.add(key)
@@ -225,10 +259,10 @@ def get_registro_ids(job_name: str, items):
 
     model       = get_hidro_model(job_name)
     verify_keys = get_verify_keys(job_name)
-    json_keys   = list(verify_keys.values())
+    key_names   = list(verify_keys)
     key_columns = [getattr(model, key) for key in verify_keys]
 
-    select_chunk = max(1, 20_000 // max(1, len(json_keys)))
+    select_chunk = max(1, 20_000 // max(1, len(key_names)))
     found        = {}
 
     hidro_session = HIDRO_DB.get_session()
@@ -236,10 +270,10 @@ def get_registro_ids(job_name: str, items):
         for start in range(0, len(items), select_chunk):
             chunk   = items[start:start + select_chunk]
             filters = [
-                getattr(model, model_key).in_(
-                    [item.get(json_key) for item in chunk]
+                getattr(model, attr).in_(
+                    [item.get(attr) for item in chunk]
                 )
-                for model_key, json_key in verify_keys.items()
+                for attr in verify_keys
             ]
             rows = (
                 hidro_session.query(model.RegistroID, *key_columns)
@@ -251,7 +285,7 @@ def get_registro_ids(job_name: str, items):
         hidro_session.close()
 
     return [
-        found.get(tuple(item.get(json_key) for json_key in json_keys))
+        found.get(tuple(item.get(attr) for attr in key_names))
         for item in items
     ]
 
@@ -262,8 +296,8 @@ def get_qual_agua_ids(items):
     if not items:
         return {}
 
-    codes = list({item["codigoestacao"] for item in items})
-    dates = list({item["Data_Hora_Dado"] for item in items})
+    codes = list({item["EstacaoCodigo"] for item in items})
+    dates = list({item["Data"] for item in items})
 
     hidro_session = HIDRO_DB.get_session()
     try:
@@ -278,43 +312,3 @@ def get_qual_agua_ids(items):
     finally:
         hidro_session.close()
 
-
-def get_verify_keys(name: str):
-    match name:
-        case ("Bacia"     | "SubBacia" | "Entidade" |
-              "Municipio" | "Rio"      | "Estacao"):
-            return {"Codigo": f"codigo{name.lower()}"}
-        case "Estado":
-            return {"Codigo": "codigouf"}
-        case ("Chuvas" | "Vazoes" | "Sedimentos" | "Cotas"):
-            return {'EstacaoCodigo': 'codigoestacao',
-                    'Data': 'Data_Hora_Dado'}
-        case "ResumoDescarga":
-            return {
-                'EstacaoCodigo':     'codigoestacao',
-                'Data':              'Data_Hora_Dado',
-                'NivelConsistencia': 'Nivel_Consistencia',
-                'Profundidade':      'Profundidade (m)',
-                'AreaMolhada':       'Area_Molhada (m2)',
-                'Cota':              'Cota (cm)',
-                'Largura':           'Largura (m)',
-                'Vazao':             'Vazao (m3/s)',
-                'VelMedia':          'Vel_Media (m/s)',
-            }
-        case "Granulometria":
-            return {'EstacaoCodigo': 'codigoestacao',
-                    'Data': 'Data_Dado',
-                    'HoraInicial': 'Hora_Inicial',
-                    'HoraFinal': 'Hora_Final'}
-        case "CurvaDescarga":
-            return {'EstacaoCodigo': 'codigoestacao',
-                    'NumeroCurva': 'Numero_Curva',
-                    'PeriodoValidadeInicio': 'Periodo_Validade_Inicio',
-                    'PeriodoValidadeFim': 'Periodo_Validade_Fim'}
-        case "QualAgua":
-            return {'EstacaoCodigo': 'codigoestacao',
-                    'Data': 'Data_Hora_Dado'}
-        case "QualAguaStatus":
-            return {'QualAguaID': 'QualAguaID'}
-        case "PerfilTransversal":
-            return {'ANA_RegistroID': 'Registro_ID'}

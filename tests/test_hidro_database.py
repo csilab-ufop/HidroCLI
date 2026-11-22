@@ -31,7 +31,7 @@ from hidrocli.config import setup_logger
 from hidrocli.database import *
 from hidrocli.database import _setup_db
 from hidrocli.database.hidro import *
-from hidrocli.jobs import JobConfig, write_data
+from hidrocli.jobs.runner import JobConfig, write_data
 from hidrocli.models.hidro import (
     DischargeMeasurement, Rain, WaterQuality, WaterQualityStatus,
 )
@@ -59,14 +59,14 @@ def test_handle_batch_update_updates_existing_rows_in_bulk(hidro_db):
 
     entries = handle_batch_update(
         "Chuvas",
-        [
+        normalize_items("Chuvas", [
             {
                 "codigoestacao":    station,
                 "Data_Hora_Dado":   datetime(2024, 1, 1),
                 "Total":            float(station),
             }
             for station in range(1, 121)
-        ],
+        ]),
     )
 
     assert entries == []
@@ -90,7 +90,7 @@ def test_discharge_summary_verify_keys_cover_the_measurement(hidro_db):
 
 def test_cross_section_verify_keys_use_ana_id():
     assert get_verify_keys("PerfilTransversal") == {
-        "ANA_RegistroID": "Registro_ID",
+        "ANA_RegistroID": "ANA_RegistroID",
     }
 
 
@@ -117,7 +117,7 @@ def test_handle_batch_update_keeps_distinct_discharge_measurements(hidro_db):
 
     entries = handle_batch_update(
         "ResumoDescarga",
-        [{
+        normalize_items("ResumoDescarga", [{
             "codigoestacao":     1,
             "Data_Hora_Dado":    datetime(2024, 1, 1),
             "Nivel_Consistencia": 1,
@@ -127,7 +127,7 @@ def test_handle_batch_update_keeps_distinct_discharge_measurements(hidro_db):
             "Largura (m)":       4.0,
             "Vazao (m3/s)":      9.0,
             "Vel_Media (m/s)":   6.0,
-        }],
+        }]),
     )
 
     assert len(entries) == 1
@@ -143,8 +143,8 @@ def test_write_data_reuses_existing_qual_agua_registro_id(hidro_db):
         "Data_Hora_Dado": datetime(2024, 1, 1),
     }
 
-    write_data(JobConfig.Series.WATER_QUALITY, [], [dict(item)])
-    write_data(JobConfig.Series.WATER_QUALITY, [], [dict(item)])
+    write_data(JobConfig.Series.WATER_QUALITY, [], normalize_items("QualAgua", [dict(item)]))
+    write_data(JobConfig.Series.WATER_QUALITY, [], normalize_items("QualAgua", [dict(item)]))
 
     assert count_hidro(WaterQuality) == 1
     assert count_hidro(WaterQualityStatus) == 1
@@ -160,12 +160,12 @@ def test_handle_batch_update_spans_multiple_chunks(hidro_db):
         for station in range(1, 2501)
     ]
 
-    entries = handle_batch_update("Chuvas", items)
+    entries = handle_batch_update("Chuvas", normalize_items("Chuvas", items))
     assert len(entries) == 2500
     insert_hidro(entries)
     assert count_hidro(Rain) == 2500
 
-    assert handle_batch_update("Chuvas", items) == []
+    assert handle_batch_update("Chuvas", normalize_items("Chuvas", items)) == []
     assert count_hidro(Rain) == 2500
 
 
@@ -176,7 +176,7 @@ def test_handle_batch_update_returns_only_new_entries(hidro_db):
 
     entries = handle_batch_update(
         "Chuvas",
-        [
+        normalize_items("Chuvas", [
             {
                 "codigoestacao":  1,
                 "Data_Hora_Dado": datetime(2024, 1, 1),
@@ -187,7 +187,7 @@ def test_handle_batch_update_returns_only_new_entries(hidro_db):
                 "Data_Hora_Dado": datetime(2024, 1, 1),
                 "Total":          7.0,
             },
-        ],
+        ]),
     )
 
     assert len(entries) == 1

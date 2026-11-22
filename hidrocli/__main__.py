@@ -36,8 +36,8 @@ def cli() -> None:
     except MigrationError as exc:
         raise SystemExit(f"[ERROR]: {exc}") from None
 
-    import hidrocli.jobs
-    hidrocli.jobs.run()
+    import hidrocli.jobs.runner
+    hidrocli.jobs.runner.run()
 
 if __name__ == "__main__":
     cli()

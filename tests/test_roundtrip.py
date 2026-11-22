@@ -27,7 +27,7 @@
 Each base and series job has a small representative payload under
 ``tests/fixtures/`` (trimmed from a live ANA download). These tests run the
 payload through the same convert -> validate -> write path used by
-``hidrocli.jobs``, so a broken ``from_json`` mapping or verify key fails
+``hidrocli.jobs.runner``, so a broken ``from_json`` mapping or verify key fails
 without needing the full download cache.
 """
 
@@ -44,8 +44,8 @@ from hidrocli.database import DatabaseType, _setup_db
 from hidrocli.database.hidro import (
     count_hidro, get_hidro_model, get_verify_keys,
 )
-from hidrocli.jobs import (
-    JobConfig, convert_json_items,
+from hidrocli.jobs.runner import (
+    JobConfig, normalize_items,
     validate_series_items, validate_series_items_date,
     write_data,
 )
@@ -82,7 +82,7 @@ def fake_job():
 
 
 def run_transform(name, items):
-    items = convert_json_items(name, items)
+    items = normalize_items(str(name), items)
     if isinstance(name, JobConfig.Series):
         job = fake_job()
         items = validate_series_items(job, name, items)
@@ -110,7 +110,7 @@ def test_roundtrip_loads_rows(name, hidro_db):
 def test_verify_keys_match_from_json(name):
     """The verify-key JSON field agrees with the model's from_json mapping."""
 
-    item = convert_json_items(name, load_fixture(name))[0]
+    item = normalize_items(str(name), load_fixture(name))[0]
     model = get_hidro_model(name)
     row = model.from_json(item)
 

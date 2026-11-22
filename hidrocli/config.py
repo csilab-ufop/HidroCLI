@@ -76,16 +76,14 @@ def setup_arguments():
     parser.add_argument('--skip-series-jobs', action='store_true', default=False,
                         help='Skip all series jobs when present')
 
+    from hidrocli.jobs import series_job_names
+
     parser.add_argument('--skip-for', default=[], nargs='*',
-                        choices=['Chuvas', 'ResumoDescarga', 'Sedimentos',
-                                 'Cotas', 'Vazoes', 'Granulometria',
-                                 'CurvaDescarga', 'QualAgua', 'PerfilTransversal'],
+                        choices=series_job_names(),
                         help='Skip job creation and requesition for the given choices')
 
     parser.add_argument('--run-for', default=[], nargs='*',
-                        choices=['Chuvas', 'ResumoDescarga', 'Sedimentos',
-                                 'Cotas', 'Vazoes', 'Granulometria',
-                                 'CurvaDescarga', 'QualAgua', 'PerfilTransversal'],
+                        choices=series_job_names(),
                         help='Runs only the choosen Jobs')
 
     parser.add_argument('--stations', default=[], nargs='*', type=int,
@@ -125,7 +123,7 @@ def setup_arguments():
     HIDRO_PATH  = args.hidro
     CLIENT_PATH = args.client
 
-    import hidrocli.jobs as jobs
+    import hidrocli.jobs.runner as jobs
     jobs.SKIP_SERIES_JOBS    = args.skip_series_jobs
     jobs.SKIP_FOR            = args.skip_for
     jobs.RUN_FOR             = args.run_for

@@ -30,8 +30,8 @@ import pytest
 from hidrocli.config import setup_logger
 from hidrocli.database import DatabaseType, _setup_db
 from hidrocli.database.client import upsert_job_records
-from hidrocli.jobs import (
-    JobConfig, filter_repeated_series_items, write_data,
+from hidrocli.jobs.runner import (
+    JobConfig, filter_repeated_series_items, normalize_items, write_data,
 )
 from hidrocli.models.client import ClientBase, JobRecords
 from hidrocli.models.hidro import (
@@ -92,7 +92,7 @@ def test_write_data_records_base_provenance(hidro_db, client_db):
         "_JobID":      5,
     }
 
-    write_data(JobConfig.Base.BASIN, [], [dict(item)])
+    write_data(JobConfig.Base.BASIN, [], normalize_items("Bacia", [dict(item)]))
 
     hidro_session = hidro_db.get_session()
     try:
@@ -120,10 +120,10 @@ def test_write_data_records_series_provenance(hidro_db, client_db):
         "_JobID":         7,
     }
 
-    write_data(JobConfig.Series.RAIN, [], [dict(item)])
-    write_data(JobConfig.Series.RAIN, [], [
+    write_data(JobConfig.Series.RAIN, [], normalize_items("Chuvas", [dict(item)]))
+    write_data(JobConfig.Series.RAIN, [], normalize_items("Chuvas", [
         {**item, "Total": 20.0, "_JobID": 8},
-    ])
+    ]))
 
     hidro_session = hidro_db.get_session()
     try:
@@ -152,7 +152,7 @@ def test_write_data_records_water_quality_status_provenance(hidro_db, client_db)
         "_JobID":         9,
     }
 
-    write_data(JobConfig.Series.WATER_QUALITY, [], [dict(item)])
+    write_data(JobConfig.Series.WATER_QUALITY, [], normalize_items("QualAgua", [dict(item)]))
 
     session = client_db.get_session()
     try:
@@ -188,7 +188,7 @@ def test_write_data_records_cross_section_verticals(hidro_db, client_db):
         "_JobID":             11,
     }
 
-    write_data(JobConfig.Series.CROSS_SECTION, [], [dict(item)])
+    write_data(JobConfig.Series.CROSS_SECTION, [], normalize_items("PerfilTransversal", [dict(item)]))
 
     hidro_session = hidro_db.get_session()
     try:
@@ -237,7 +237,7 @@ def test_cross_section_skips_missing_ana_id(hidro_db, client_db):
         "_JobID":             11,
     }
 
-    write_data(JobConfig.Series.CROSS_SECTION, [], [dict(item)])
+    write_data(JobConfig.Series.CROSS_SECTION, [], normalize_items("PerfilTransversal", [dict(item)]))
 
     hidro_session = hidro_db.get_session()
     try:
@@ -270,10 +270,10 @@ def test_cross_section_keeps_distinct_ana_ids_with_same_natural_key(
             "_JobID":             registro_id,
         }
 
-    write_data(JobConfig.Series.CROSS_SECTION, [], [
+    write_data(JobConfig.Series.CROSS_SECTION, [], normalize_items("PerfilTransversal", [
         item(111.0, 1, 50.0, 5.0),
         item(222.0, 2, 60.0, 6.0),
-    ])
+    ]))
 
     hidro_session = hidro_db.get_session()
     try:
@@ -304,11 +304,11 @@ def test_cross_section_keeps_every_level_of_one_ana_id(hidro_db):
             "Distancia":          distancia,
         }
 
-    write_data(JobConfig.Series.CROSS_SECTION, [], [
+    write_data(JobConfig.Series.CROSS_SECTION, [], normalize_items("PerfilTransversal", [
         level(1449.0, 0.0),
         level(1450.0, 20.0),
         level(1438.0, 21.0),
-    ])
+    ]))
 
     hidro_session = hidro_db.get_session()
     try:
@@ -334,7 +334,7 @@ def test_water_quality_status_uses_local_qual_agua_id(hidro_db, client_db):
         "_JobID":         9,
     }
 
-    write_data(JobConfig.Series.WATER_QUALITY, [], [dict(item)])
+    write_data(JobConfig.Series.WATER_QUALITY, [], normalize_items("QualAgua", [dict(item)]))
 
     hidro_session = hidro_db.get_session()
     try:
@@ -360,6 +360,6 @@ def test_filter_repeated_discharge_summary_ignores_job_tag():
     ]
 
     filtered = filter_repeated_series_items(
-        JobConfig.Series.DISCHARGE_SUMMARY, items)
+        JobConfig.Series.DISCHARGE_SUMMARY, normalize_items("ResumoDescarga", items))
 
     assert len(filtered) == 1
