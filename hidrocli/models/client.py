@@ -249,7 +249,7 @@ class JobRecords(ClientBase):
     """ int: unique mapping identifier. """
 
     JobID      = Column(Integer, nullable=False)
-    """ int: identifier of the job in ``JobName``'s job table. """
+    """ int: identifier of the job in `JobName`'s job table. """
 
     JobName    = Column(String, nullable=False)
     """ string: job name, used to resolve BaseJobs, StationJobs or SeriesJobs. """
