@@ -55,6 +55,8 @@ from hidrocli.database.hidro import (
     normalize_items, coerce_value,
 )
 
+from requests.exceptions import HTTPError, RequestException
+
 from hidrocli.webservices import request_job_data, request_token
 
 from hidrocli.jobs import DedupMode, expected_keys, get_date_key, get_dedup
@@ -515,64 +517,145 @@ def trigger_job(job_config: JobConfig, filters) -> None:
     )
     write_queue.put(finish_queue)
     writer.join()
-    status_map = {1: "Pending", 2: "Failed", 5: "Completed"}
+    status_map = {1: "Pending", 2: "Failed", 3: "Invalid", 5: "Completed"}
     counts = {status_map.get(s, f"Unknown({s})"): c for s, c in count_job_by_status(job_config)}
-    logger.info(f"Pending: {counts.get('Pending', 0)}, Failed: {counts.get('Failed', 0)}, Completed: {counts.get('Completed', 0)}\n")
+    logger.info(f"Pending: {counts.get('Pending', 0)}, Failed: {counts.get('Failed', 0)}, Invalid: {counts.get('Invalid', 0)}, Completed: {counts.get('Completed', 0)}\n")
 
 
 token_lock = Lock()
+
+SERVER_ERROR_BACKOFF = 60.0
+"""Seconds the whole worker pool pauses after a 5xx server response."""
+
+_backoff_lock = Lock()
+_backoff_until = 0.0
+"""Monotonic timestamp until which every worker pauses between requests."""
+
+
+def _backoff_pool() -> None:
+    """Make every worker pause until the backoff window expires."""
+
+    global _backoff_until
+    with _backoff_lock:
+        _backoff_until = max(_backoff_until, time.monotonic() + SERVER_ERROR_BACKOFF)
+
+
+def _wait_backoff() -> None:
+    """Sleep if a previous 5xx response put the pool in a cooldown window."""
+
+    with _backoff_lock:
+        remaining = _backoff_until - time.monotonic()
+    if remaining > 0:
+        time.sleep(remaining)
+
+
+def _mark_failed(job: HidroJob, job_config: JobConfig) -> None:
+    """Mark a job FAILED and, for series jobs, bump its retry count."""
+
+    job.Status = JobConfig.Status.FAILED.value
+    match job_config:
+        case JobConfig.Series():
+            job.Retries += 1
+
+
+def _is_sql_grammar(response) -> bool:
+    """Return True when the response body is the 417 SQLGrammarException."""
+
+    if response is None:
+        return False
+    try:
+        body = response.json()
+    except Exception:
+        return False
+    return (isinstance(body, dict)
+            and body.get("code") == 417
+            and body.get("status") == "EXPECTATION_FAILED"
+            and "SQLGrammarException" in str(body.get("message", "")))
+
+
+def _handle_http_error(job: HidroJob, job_config: JobConfig, e) -> bool:
+    """Apply an HTTPError to the job. Return True when the job is skipped."""
+
+    code = e.response.status_code if e.response is not None else None
+    if code == 401:
+        logger.warning(f"[WORKER JOB {job.ID}]: Unauthorized, skipping.")
+        return True
+    if code is not None and 500 <= code < 600:
+        _backoff_pool()
+        logger.verbose(f"[WORKER JOB {job.ID}]: Server error {code}, skipping.")
+        return True
+    if code == 417 and _is_sql_grammar(e.response):
+        logger.verbose(f"[WORKER JOB {job.ID}]: {job_config} invalid: {e}")
+        job.Status = JobConfig.Status.INVALID.value
+    else:
+        logger.error(f"[WORKER JOB {job.ID}]: unhandled HTTP error: {e}")
+        _mark_failed(job, job_config)
+    return False
+
+
+def _process_success(job: HidroJob, job_config: JobConfig, items):
+    """Normalize and validate fetched items, marking the job COMPLETED."""
+
+    try:
+        items = normalize_items(str(job_config), items)
+        job.Status = JobConfig.Status.COMPLETED.value
+        match job_config:
+            case JobConfig.Base():
+                job.LastCheck = datetime.now()
+            case JobConfig.Series():
+                if items:
+                    items = validate_series_items(job, job_config, items)
+                    if items:
+                        items = validate_series_items_date(job, job_config, items)
+    except Exception as e:
+        logger.error(f"[WORKER JOB {job.ID}]: {e}, {items}, {type(items)}")
+    return items
+
+
 def handle_job_request(job: HidroJob, job_config: JobConfig) -> None:
     """ Request data of an HidroJob.
     Validate data on success return, and convert to ORM model before writing on Queue.
     """
 
+    _wait_backoff()
     start = time.time()
-    with token_lock:
-        token = get_token()
+    success, items = False, []
     try:
+        with token_lock:
+            token = get_token()
         success, items = request_job_data(
             job_config, token, job.to_params(FILTER),
             save_json = SAVE_JSON,
             json_dir  = JSON_DIR,
             read_json = READ_JSON,
         )
-    except PermissionError:
-        logger.warning(f"[WORKER JOB {job.ID}]: Unauthorized, skipping.")
+    except HTTPError as e:
+        if _handle_http_error(job, job_config, e):
+            return
+    except RequestException as e:
+        logger.trace(f"[WORKER JOB {job.ID}]: Request error, skipping. {e}")
         return
-
-    if success:
-        try:
-            items = normalize_items(str(job_config), items)
-            job.Status = JobConfig.Status.COMPLETED.value
-            match job_config:
-                case JobConfig.Base():
-                    job.LastCheck = datetime.now()
-                case JobConfig.Series():
-                    if (len(items) > 0):
-                        items = validate_series_items(job, job_config, items)
-                        if (len(items) > 0):
-                            items = validate_series_items_date(job, job_config, items)
-        except Exception as e:
-            logger.error(f"[WORKER JOB {job.ID}]: {e}, {items}, {type(items)}")
+    except Exception as e:
+        logger.error(f"[WORKER JOB {job.ID}]: unhandled error: {e}")
+        _mark_failed(job, job_config)
     else:
-        job.Status = JobConfig.Status.FAILED.value
-        match job_config:
-            case JobConfig.Series():
-                job.Retries += 1
+        if success:
+            items = _process_success(job, job_config, items)
+        else:
+            logger.trace(f"[WORKER JOB {job.ID}]: {job_config} request failed, marking job as FAILED")
+            _mark_failed(job, job_config)
+
     if success and items:
         for item in items:
             if isinstance(item, dict):
                 item["_JobID"] = job.ID
-    elapsed = time.time() - start
-    logger.verbose(f"[WORKER]: Job {job.ID} completed in {elapsed:.2f} seconds")
-    queue_data = QueueData(
+    write_queue.put(QueueData(
         job_config  = job_config,
         job         = job,
         items       = items,
-        worker_time = elapsed,
+        worker_time = time.time() - start,
         stop_signal = False
-    )
-    write_queue.put(queue_data)
+    ))
 
 
 def db_writer() -> None:
@@ -785,8 +868,7 @@ def validate_series_items(job, job_config: JobConfig, items):
         valid.append(item)
 
     if len(valid) == 0:
-        job.Status   = JobConfig.Status.FAILED.value
-        job.Retries += 1
+        _mark_failed(job, job_config)
     return valid
 
 
@@ -896,8 +978,5 @@ def run():
                 logger.info(f"Skiping job for {job}.")
                 logger.info(f"====================================\n")
                 continue
-        time_start = time.perf_counter()
         check_series_job(job)
-        elapsed = time.perf_counter() - time_start
-        logger.critical(f"Execution time: {elapsed:.4f} seconds")
         logger.info(f"====================================\n")

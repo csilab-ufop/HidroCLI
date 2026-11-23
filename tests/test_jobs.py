@@ -32,6 +32,23 @@ from hidrocli.config import setup_logger
 
 setup_logger()
 
+
+def _http_error(status, body=None):
+    """Build an HTTPError whose response carries ``status`` and optional body."""
+    response = MagicMock(status_code=status)
+    if body is not None:
+        response.json.return_value = body
+    return hidrocli.jobs.runner.HTTPError(f"{status}", response=response)
+
+
+SQL_GRAMMAR_BODY = {
+    "status":  "EXPECTATION_FAILED",
+    "code":    417,
+    "message": "org.hibernate.exception.SQLGrammarException: could not extract ResultSet",
+    "items":   None,
+}
+
+
 @patch('hidrocli.jobs.runner.count_client')
 @patch('hidrocli.jobs.runner.add_token')
 @patch('hidrocli.jobs.runner.update_token')
@@ -308,8 +325,7 @@ def test_handle_job_request_tags_items_with_job_id(
 
 
 @patch('hidrocli.jobs.runner.write_queue')
-@patch('hidrocli.jobs.runner.request_job_data',
-       side_effect=PermissionError("401"))
+@patch('hidrocli.jobs.runner.request_job_data', side_effect=_http_error(401))
 @patch('hidrocli.jobs.runner.get_token', return_value="token")
 def test_handle_job_request_skips_unauthorized(mock_token, mock_request,
                                                mock_queue):
@@ -325,6 +341,181 @@ def test_handle_job_request_skips_unauthorized(mock_token, mock_request,
 
     assert job.Status == hidrocli.jobs.runner.JobConfig.Status.PENDING.value
     mock_queue.put.assert_not_called()
+
+
+@patch('hidrocli.jobs.runner.write_queue')
+@patch('hidrocli.jobs.runner.request_job_data',
+       side_effect=_http_error(417, SQL_GRAMMAR_BODY))
+@patch('hidrocli.jobs.runner.get_token', return_value="token")
+def test_handle_job_request_marks_invalid_on_api_error(mock_token,
+                                                       mock_request,
+                                                       mock_queue):
+    """A 417 with a SQLGrammarException body marks the job INVALID."""
+
+    config = hidrocli.jobs.runner.JobConfig.Series.GRANULOMETRY
+    job    = MagicMock()
+    job.ID        = 42
+    job.Status    = hidrocli.jobs.runner.JobConfig.Status.PENDING.value
+    job.Retries   = 0
+    job.to_params.return_value = {}
+
+    hidrocli.jobs.runner.handle_job_request(job, config)
+
+    assert job.Status  == hidrocli.jobs.runner.JobConfig.Status.INVALID.value
+    assert job.Retries == 0
+    mock_queue.put.assert_called_once()
+    queued = mock_queue.put.call_args.args[0]
+    assert queued.job.Status == hidrocli.jobs.runner.JobConfig.Status.INVALID.value
+    assert queued.items == []
+
+
+@patch('hidrocli.jobs.runner.write_queue')
+@patch('hidrocli.jobs.runner.request_job_data',
+       side_effect=hidrocli.jobs.runner.RequestException("Connection aborted."))
+@patch('hidrocli.jobs.runner.get_token', return_value="token")
+def test_handle_job_request_skips_on_request_error(mock_token, mock_request,
+                                                   mock_queue):
+    """A network error leaves the job PENDING and excludes it from this run."""
+
+    config = hidrocli.jobs.runner.JobConfig.Series.GRANULOMETRY
+    job    = MagicMock()
+    job.ID        = 42
+    job.Status    = hidrocli.jobs.runner.JobConfig.Status.PENDING.value
+    job.Retries   = 0
+    job.to_params.return_value = {}
+
+    hidrocli.jobs.runner.handle_job_request(job, config)
+
+    assert job.Status  == hidrocli.jobs.runner.JobConfig.Status.PENDING.value
+    assert job.Retries == 0
+    mock_queue.put.assert_not_called()
+
+
+@patch('hidrocli.jobs.runner._backoff_pool')
+@patch('hidrocli.jobs.runner.write_queue')
+@patch('hidrocli.jobs.runner.request_job_data', side_effect=_http_error(504))
+@patch('hidrocli.jobs.runner.get_token', return_value="token")
+def test_handle_job_request_skips_on_server_error(mock_token, mock_request,
+                                                  mock_queue, mock_backoff):
+    """A 5xx server error leaves the job PENDING and backs off the pool."""
+
+    config = hidrocli.jobs.runner.JobConfig.Series.GRANULOMETRY
+    job    = MagicMock()
+    job.ID        = 42
+    job.Status    = hidrocli.jobs.runner.JobConfig.Status.PENDING.value
+    job.Retries   = 0
+    job.to_params.return_value = {}
+
+    hidrocli.jobs.runner.handle_job_request(job, config)
+
+    assert job.Status  == hidrocli.jobs.runner.JobConfig.Status.PENDING.value
+    assert job.Retries == 0
+    mock_queue.put.assert_not_called()
+    mock_backoff.assert_called_once()
+
+
+@patch('hidrocli.jobs.runner.write_queue')
+@patch('hidrocli.jobs.runner.request_job_data', side_effect=_http_error(400))
+@patch('hidrocli.jobs.runner.get_token', return_value="token")
+def test_handle_job_request_marks_failed_on_unhandled_http(mock_token,
+                                                           mock_request,
+                                                           mock_queue):
+    """A non-401/5xx/417-SQLGrammar HTTP error marks the job FAILED."""
+
+    config = hidrocli.jobs.runner.JobConfig.Series.GRANULOMETRY
+    job    = MagicMock()
+    job.ID        = 42
+    job.Status    = hidrocli.jobs.runner.JobConfig.Status.PENDING.value
+    job.Retries   = 0
+    job.to_params.return_value = {}
+
+    hidrocli.jobs.runner.handle_job_request(job, config)
+
+    assert job.Status  == hidrocli.jobs.runner.JobConfig.Status.FAILED.value
+    assert job.Retries == 1
+    mock_queue.put.assert_called_once()
+
+
+@patch('hidrocli.jobs.runner.write_queue')
+@patch('hidrocli.jobs.runner.request_job_data', side_effect=_http_error(417))
+@patch('hidrocli.jobs.runner.get_token', return_value="token")
+def test_handle_job_request_marks_failed_on_417_without_sql(mock_token,
+                                                            mock_request,
+                                                            mock_queue):
+    """A 417 without the SQLGrammarException body is unhandled -> FAILED."""
+
+    config = hidrocli.jobs.runner.JobConfig.Series.GRANULOMETRY
+    job    = MagicMock()
+    job.ID        = 42
+    job.Status    = hidrocli.jobs.runner.JobConfig.Status.PENDING.value
+    job.Retries   = 0
+    job.to_params.return_value = {}
+
+    hidrocli.jobs.runner.handle_job_request(job, config)
+
+    assert job.Status  == hidrocli.jobs.runner.JobConfig.Status.FAILED.value
+    assert job.Retries == 1
+    mock_queue.put.assert_called_once()
+
+
+@patch('hidrocli.jobs.runner.write_queue')
+@patch('hidrocli.jobs.runner.request_job_data', return_value=(False, []))
+@patch('hidrocli.jobs.runner.get_token', return_value="token")
+def test_handle_job_request_marks_failed_and_increments_retries(
+        mock_token, mock_request, mock_queue):
+    """A failed request marks a series job FAILED and bumps its retries."""
+
+    config = hidrocli.jobs.runner.JobConfig.Series.GRANULOMETRY
+    job    = MagicMock()
+    job.ID        = 42
+    job.Status    = hidrocli.jobs.runner.JobConfig.Status.PENDING.value
+    job.Retries   = 0
+    job.to_params.return_value = {}
+
+    hidrocli.jobs.runner.handle_job_request(job, config)
+
+    assert job.Status  == hidrocli.jobs.runner.JobConfig.Status.FAILED.value
+    assert job.Retries == 1
+    mock_queue.put.assert_called_once()
+
+
+def test_is_sql_grammar():
+    """Only the exact 417 SQLGrammarException body is recognized."""
+
+    assert hidrocli.jobs.runner._is_sql_grammar(
+        _http_error(417, SQL_GRAMMAR_BODY).response
+    )
+    assert not hidrocli.jobs.runner._is_sql_grammar(None)
+    assert not hidrocli.jobs.runner._is_sql_grammar(_http_error(400).response)
+    assert not hidrocli.jobs.runner._is_sql_grammar(
+        _http_error(417, {"code": 417, "message": "some other error"}).response
+    )
+
+
+def test_backoff_pool_sets_future_until(monkeypatch):
+    """A server error moves the pool-wide backoff window into the future."""
+
+    monkeypatch.setattr(hidrocli.jobs.runner, "SERVER_ERROR_BACKOFF", 5)
+    monkeypatch.setattr(hidrocli.jobs.runner, "_backoff_until", 0.0)
+    before = hidrocli.jobs.runner.time.monotonic()
+
+    hidrocli.jobs.runner._backoff_pool()
+
+    assert hidrocli.jobs.runner._backoff_until >= before + 5
+
+
+@patch('hidrocli.jobs.runner.time.sleep')
+def test_wait_backoff_sleeps_during_window(mock_sleep, monkeypatch):
+    """Workers sleep while a pool-wide backoff window is active."""
+
+    monkeypatch.setattr(
+        hidrocli.jobs.runner, "_backoff_until",
+        hidrocli.jobs.runner.time.monotonic() + 10,
+    )
+
+    hidrocli.jobs.runner._wait_backoff()
+
+    mock_sleep.assert_called_once()
 
 
 def test_filter_cross_section_returns_empty_without_ana_id():
@@ -472,6 +663,11 @@ def test_trigger_series_jobs_retries_until_none(mock_count, mock_trigger,
     mock_trigger.assert_called_once_with(
         hidrocli.jobs.runner.JobConfig.Series.RAIN, []
     )
+    assert mock_filters.call_args.args[1] == [
+        hidrocli.jobs.runner.JobConfig.Status.FAILED.value,
+        hidrocli.jobs.runner.JobConfig.Status.PENDING.value,
+    ]
+    assert mock_filters.call_args.kwargs["max_retries"] is True
 
 
 def test_process_period_creates_yearly_windows():
