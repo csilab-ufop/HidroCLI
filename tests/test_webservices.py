@@ -55,47 +55,43 @@ def test_request_hidro_ws_success(mock_get):
     )
 
 
+@pytest.mark.parametrize("status", [400, 401, 407, 417, 500, 504])
 @patch('hidrocli.webservices.requests.get')
-@patch('hidrocli.webservices.time.sleep')
-def test_request_hidro_ws_error(mock_sleep, mock_get):
-    """Test sleep on 503 code."""
+def test_request_hidro_ws_non_ok_raises(mock_get, status):
+    """Any non-2xx status raises an HTTPError carrying the response."""
 
     mock_response                   = Mock()
     mock_response.ok                = False
-    mock_response.status_code       = 503
-    mock_response.json.return_value = {"error": "Service Unavailable"}
+    mock_response.status_code       = status
+    mock_response.json.side_effect = ValueError("No JSON body")
     mock_get.return_value           = mock_response
 
-    result = request_hidro_ws("/endpoint", {})
-
-    assert result is None
-    mock_sleep.assert_called_once_with(1)
-
-
-@patch('hidrocli.webservices.requests.get')
-@patch('hidrocli.webservices.time.sleep')
-def test_request_hidro_ws_unauthorized_raises(mock_sleep, mock_get):
-    """Test that 401 raises instead of being treated as transient."""
-
-    mock_response                   = Mock()
-    mock_response.ok                = False
-    mock_response.status_code       = 401
-    mock_response.json.return_value = {"error": "Unauthorized"}
-    mock_get.return_value           = mock_response
-
-    with pytest.raises(PermissionError):
+    with pytest.raises(requests.exceptions.HTTPError) as excinfo:
         request_hidro_ws("/endpoint", {})
 
-    mock_sleep.assert_not_called()
+    assert excinfo.value.response.status_code == status
 
 
 @patch('hidrocli.webservices.requests.get')
-def test_request_hidro_ws_timeout_returns_none(mock_get):
-    """Test that a timeout returns None without an unbound response."""
+def test_request_hidro_ws_timeout_raises(mock_get):
+    """Test that a timeout is logged and re-raised."""
 
     mock_get.side_effect = requests.exceptions.Timeout
 
-    assert request_hidro_ws("/endpoint", {}) is None
+    with pytest.raises(requests.exceptions.Timeout):
+        request_hidro_ws("/endpoint", {})
+
+
+@patch('hidrocli.webservices.requests.get')
+def test_request_hidro_ws_connection_error_raises(mock_get):
+    """Test that a connection error is logged and re-raised."""
+
+    mock_get.side_effect = requests.exceptions.ConnectionError(
+        "Connection aborted.", ConnectionResetError(54, "Connection reset by peer")
+    )
+
+    with pytest.raises(requests.exceptions.ConnectionError):
+        request_hidro_ws("/endpoint", {})
 
 
 @patch('hidrocli.webservices.requests.get')
@@ -218,9 +214,11 @@ def test_load_response_returns_saved_payload(tmp_path):
 def test_request_job_data_unauthorized_raises(mock_request):
     """Test that a 401 is propagated so the caller can skip the job."""
 
-    mock_request.side_effect = PermissionError("401")
+    mock_request.side_effect = requests.exceptions.HTTPError(
+        "401", response=Mock(status_code=401)
+    )
 
-    with pytest.raises(PermissionError):
+    with pytest.raises(requests.exceptions.HTTPError):
         request_job_data("Bacia", "token", {})
 
 

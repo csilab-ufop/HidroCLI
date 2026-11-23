@@ -56,16 +56,27 @@ _BASE_JOBS = {"Bacia", "SubBacia", "Entidade", "Municipio", "Rio", "Estado"}
 def request_hidro_ws(endpoint, headers, params={}):
     """ Make a request to ANA API and returns the json.
 
-    :raises PermissionError: when the API rejects the access token (HTTP 401).
+    :raises requests.exceptions.HTTPError: when the API returns a non-2xx
+        status.
+    :raises requests.exceptions.RequestException: when the request fails due
+        to a network/connection error.
     """
 
     url = "https://www.ana.gov.br/hidrowebservice"
     logger.verbose(f"[REQUEST]: Endpoint: {endpoint}\nHeaders: {headers}\nParams: {params}")
     try:
         response = requests.get(f"{url}{endpoint}", headers=headers, params=params, timeout=300)
-    except requests.exceptions.Timeout:
-        logger.warning(f"[REQUEST]: Timeout reached for {endpoint}, params: {params}")
-        return None
+    except requests.exceptions.RequestException as e:
+        match type(e).__name__:
+            case "SSLError" | "ConnectionError":
+                logger.trace(
+                    f"[REQUEST]: {type(e).__name__} for {endpoint}, params: {params}: {e}"
+                )
+            case _:
+                logger.error(
+                    f"[REQUEST]: unhandled {type(e).__name__} for {endpoint}, params: {params}: {e}"
+                )
+        raise
     if response.ok:
         try:
             return response.json()
@@ -73,14 +84,16 @@ def request_hidro_ws(endpoint, headers, params={}):
             logger.error(f"[REQUEST]: (exception): {e}")
     else:
         try:
-            logger.error(f"[REQUEST]: (json): {json.dumps(response.json(), indent=2, ensure_ascii=False)}")
-        except:
-            logger.debug(f"[REQUEST]: (response): {response} (status: {response.status_code})")
-        match response.status_code:
-            case 401:
-                raise PermissionError(f"{endpoint} rejected the access token")
-            case 503 | 504:
-                time.sleep(1)
+            body = response.json()
+        except Exception:
+            body = None
+        logger.trace(
+            f"[REQUEST]: HTTP {response.status_code} for {endpoint}, "
+            f"params: {params}, body: {body}"
+        )
+        raise requests.exceptions.HTTPError(
+            f"{response.status_code}", response=response,
+        )
 
 def request_token(client_id: str, client_password: str, max_retries=3, retry_delay=2):
     """ Request an token to ANA API and returns it."""
@@ -121,8 +134,8 @@ def request_job_data(job_name: str, token: str, params: dict,
     :returns: ``(True, items)`` on success, ``(False, [])`` on a request
         failure.
 
-    :raises PermissionError: when the API rejects the access token (HTTP
-        401), so the caller can skip the job without retrying it.
+    :raises requests.exceptions.HTTPError: when the API returns a non-2xx
+        status, propagated from :func:`request_hidro_ws`.
     """
 
     if read_json:
@@ -138,10 +151,9 @@ def request_job_data(job_name: str, token: str, params: dict,
         "Authorization": f"Bearer {token}"
     }
     endpoint = _DATA_ENDPOINTS_MAP[job_name]
+    response = request_hidro_ws(endpoint, headers, params)
     try:
-        items = request_hidro_ws(endpoint, headers, params).get("items", {})
-    except PermissionError:
-        raise
+        items = response.get("items", {})
     except Exception as e:
         logger.verbose(f"[REQUEST_DATA]: (exception): {e}")
         return (False, [])
