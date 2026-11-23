@@ -30,7 +30,9 @@ from sqlalchemy.sql              import elements
 
 from typing import List
 
-from hidrocli.models.client import *
+from hidrocli.models.client import (
+    ClientBase, Credentials, HidroJob, JobRecords, JobStatus, SeriesJobs, Token,
+)
 
 CLIENT_DB   = None
 
@@ -291,7 +293,7 @@ def iter_jobs(job_name: str, filters: List[elements], chunk_size: int = 1000):
         yield from chunk
 
 
-def job_to_mapping(job: HidroJob) -> dict:
+def _job_to_mapping(job: HidroJob) -> dict:
     """Return a bulk-insert mapping for an unsaved job instance.
 
     Bulk mappings bypass the ORM flush, so unset columns are filled from their
@@ -317,10 +319,10 @@ def insert_jobs_bulk(jobs: List[HidroJob]) -> None:
 
     if not jobs:
         return
-    insert_job_mappings(jobs[0].HidroTable, [job_to_mapping(job) for job in jobs])
+    _insert_job_mappings(jobs[0].HidroTable, [_job_to_mapping(job) for job in jobs])
 
 
-def insert_job_mappings(job_name: str, mappings: List[dict]) -> None:
+def _insert_job_mappings(job_name: str, mappings: List[dict]) -> None:
     """Insert a chunk of job mappings without creating ORM instances."""
 
     if not mappings:

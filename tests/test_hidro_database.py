@@ -39,6 +39,16 @@ from hidrocli.models.hidro import (
 setup_logger()
 
 
+def _count_rows(model):
+    """Count rows for *model* using the patched Hidro connection."""
+    import hidrocli.database.hidro as hidro
+    session = hidro.HIDRO_DB.get_session()
+    try:
+        return session.query(model).count()
+    finally:
+        session.close()
+
+
 @pytest.fixture
 def hidro_db(tmp_path):
 
@@ -134,7 +144,7 @@ def test_handle_batch_update_keeps_distinct_discharge_measurements(hidro_db):
     assert entries[0].Vazao == 9.0
 
     insert_hidro(entries)
-    assert count_hidro(DischargeMeasurement) == 2
+    assert _count_rows(DischargeMeasurement) == 2
 
 
 def test_write_data_reuses_existing_qual_agua_registro_id(hidro_db):
@@ -146,8 +156,8 @@ def test_write_data_reuses_existing_qual_agua_registro_id(hidro_db):
     write_data(JobConfig.Series.WATER_QUALITY, [], normalize_items("QualAgua", [dict(item)]))
     write_data(JobConfig.Series.WATER_QUALITY, [], normalize_items("QualAgua", [dict(item)]))
 
-    assert count_hidro(WaterQuality) == 1
-    assert count_hidro(WaterQualityStatus) == 1
+    assert _count_rows(WaterQuality) == 1
+    assert _count_rows(WaterQualityStatus) == 1
 
 
 def test_handle_batch_update_spans_multiple_chunks(hidro_db):
@@ -163,10 +173,10 @@ def test_handle_batch_update_spans_multiple_chunks(hidro_db):
     entries = handle_batch_update("Chuvas", normalize_items("Chuvas", items))
     assert len(entries) == 2500
     insert_hidro(entries)
-    assert count_hidro(Rain) == 2500
+    assert _count_rows(Rain) == 2500
 
     assert handle_batch_update("Chuvas", normalize_items("Chuvas", items)) == []
-    assert count_hidro(Rain) == 2500
+    assert _count_rows(Rain) == 2500
 
 
 def test_handle_batch_update_returns_only_new_entries(hidro_db):

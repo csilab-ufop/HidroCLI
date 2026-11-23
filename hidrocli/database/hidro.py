@@ -29,7 +29,9 @@ from typing import List
 
 from sqlalchemy import select
 
-from hidrocli.models.hidro  import *
+from hidrocli.models.hidro import (
+    HidroBase, State, Station, VerticalCrossSection, WaterQuality,
+)
 
 HIDRO_DB = None
 
@@ -126,15 +128,6 @@ def make_vertical_cross_section(item: dict, parent_id: int):
     return VerticalCrossSection.from_json(item, parent_id)
 
 
-def count_hidro(model: HidroBase):
-    """ Counts a given Model in Hidro Database. """
-
-    hidro_session = HIDRO_DB.get_session()
-    count_model   = hidro_session.query(model).count()
-    hidro_session.close()
-    return count_model
-
-
 def get_states() -> State:
     """ Returns registered States in Hidro Database. """
 
@@ -147,14 +140,14 @@ def get_states() -> State:
 def get_period(model_name: str, only_code=False, with_null_end_date=False):
     """ Returns stations with initial and final periods for an given table in Hidro Database. """
 
-    statement = create_period_statement(model_name, only_code, with_null_end_date)
+    statement = _create_period_statement(model_name, only_code, with_null_end_date)
     hidro_session = HIDRO_DB.get_session()
     period_data = hidro_session.execute(statement)
     hidro_session.close()
     return period_data
 
 
-def create_period_statement(model_name, only_code: bool, with_null_end_date: bool):
+def _create_period_statement(model_name, only_code: bool, with_null_end_date: bool):
     columns = [Station.Codigo]
     start_col, end_col = (
         getattr(Station, attr) for attr in get_station_period(model_name)

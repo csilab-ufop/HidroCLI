@@ -42,7 +42,7 @@ import pytest
 from hidrocli.config import setup_logger
 from hidrocli.database import DatabaseType, _setup_db
 from hidrocli.database.hidro import (
-    count_hidro, get_hidro_model, get_verify_keys,
+    get_hidro_model, get_verify_keys,
 )
 from hidrocli.jobs.runner import (
     JobConfig, normalize_items,
@@ -69,6 +69,16 @@ def hidro_db(tmp_path):
 def load_fixture(name):
     data = json.loads((FIXTURES / f"{name}.json").read_text())
     return data if isinstance(data, list) else [data]
+
+
+def _count_rows(model):
+    """Count rows for *model* using the patched Hidro connection."""
+    import hidrocli.database.hidro as hidro
+    session = hidro.HIDRO_DB.get_session()
+    try:
+        return session.query(model).count()
+    finally:
+        session.close()
 
 
 def fake_job():
@@ -103,7 +113,7 @@ def test_roundtrip_loads_rows(name, hidro_db):
     items = run_transform(name, load_fixture(name))
     write_data(name, [], items)
 
-    assert count_hidro(get_hidro_model(name)) > 0
+    assert _count_rows(get_hidro_model(name)) > 0
 
 
 @pytest.mark.parametrize("name", ALL_JOBS)
