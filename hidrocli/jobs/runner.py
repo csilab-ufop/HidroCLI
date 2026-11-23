@@ -550,23 +550,14 @@ def trigger_job(job_config: JobConfig, filters, total: int) -> None:
 
     status_map = {1: "Pending", 2: "Failed", 3: "Invalid", 5: "Completed"}
     counts = {status_map.get(s, f"Unknown({s})"): c for s, c in count_job_by_status(job_config)}
-
-    if interactive:
-        bar.set_postfix_str(
-            f"Pending={counts.get('Pending', 0)}, "
-            f"Failed={counts.get('Failed', 0)}, "
-            f"Invalid={counts.get('Invalid', 0)}, "
-            f"Completed={counts.get('Completed', 0)}",
-            refresh=False,
-        )
-    bar.close()
-
-    _announce(
-        f"Pending: {counts.get('Pending', 0)}, "
-        f"Failed: {counts.get('Failed', 0)}, "
-        f"Invalid: {counts.get('Invalid', 0)}, "
-        f"Completed: {counts.get('Completed', 0)}"
+    summary = ", ".join(
+        f"{key}: {counts.get(key, 0)}"
+        for key in ("Pending", "Failed", "Invalid", "Completed")
     )
+
+    bar.set_postfix_str(summary, refresh=False)
+    bar.close()
+    _announce(summary)
 
 
 token_lock = Lock()
