@@ -27,7 +27,7 @@ import json
 from datetime import datetime
 from typing import List
 
-from sqlalchemy import select
+from sqlalchemy import insert, select
 
 from hidrocli.models.hidro import (
     HidroBase, State, Station, VerticalCrossSection, WaterQuality,
@@ -160,36 +160,40 @@ def _create_period_statement(model_name, only_code: bool, with_null_end_date: bo
     return statement
 
 
-def _updated_mapping(model, item):
-    """Return bulk-update values for an existing row, excluding identity."""
+def _row_mapping(model, item):
+    """Return one normalized item as a model-column mapping.
 
-    mapped = model.from_json(item)
+    Mirrors :meth:`HidroBaseModel.from_json` without building an ORM instance,
+    so the writer can hand the mapping straight to a Core bulk insert.
+    """
+
     return {
-        column.key: getattr(mapped, column.key)
+        column.key: item.get(column.key)
         for column in model.__table__.columns
         if column.key not in ("RegistroID", "DataIns")
     }
 
 
-def handle_batch_update(job_name: str, items):
-    """Upsert ``items`` into the job's Hidro model.
+def upsert_items(job_name: str, items) -> int:
+    """Insert or update ``items`` for the job's Hidro model.
 
-    Only the key columns are read for existing rows; updates are sent through
-    ORM bulk mappings and committed once per chunk. This keeps memory flat and
-    makes repeated loads actually update existing rows.
-
-    Returns the list of newly created rows (not yet inserted).
+    Existing rows are updated with ORM bulk mappings; new rows are inserted
+    with a Core executemany. Returns the number of new rows inserted.
     """
+
+    if not items:
+        return 0
 
     hidro_session = HIDRO_DB.get_session()
     model         = get_hidro_model(job_name)
     verify_keys   = get_verify_keys(job_name)
+    table         = model.__table__
 
     # SQLite allows 32,766 bound parameters per statement. Keep the key
-    # lookup below that, and cap the update mapping by column count so wide
-    # models such as QualAgua do not build oversized batches.
+    # lookup below that, and cap the batch by column count so wide models
+    # such as QualAgua do not build oversized statements.
     select_chunk  = max(1, 20_000 // max(1, len(verify_keys)))
-    mapping_chunk = max(1, 200_000 // max(1, len(model.__table__.columns)))
+    mapping_chunk = max(1, 200_000 // max(1, len(table.columns)))
     chunk_size    = min(select_chunk, mapping_chunk)
 
     key_columns   = [getattr(model, key) for key in verify_keys]
@@ -222,10 +226,10 @@ def handle_batch_update(job_name: str, items):
 
                 row_id = existing.get(key)
                 if row_id is None:
-                    new_entries.append(model.from_json(item))
+                    new_entries.append(_row_mapping(model, item))
                     continue
 
-                mapping = _updated_mapping(model, item)
+                mapping = _row_mapping(model, item)
                 mapping["RegistroID"] = row_id
                 updates.append(mapping)
 
@@ -235,9 +239,16 @@ def handle_batch_update(job_name: str, items):
                 logger.verbose(
                     f"Updated {len(updates)} {model.__tablename__} rows."
                 )
+
+        for start in range(0, len(new_entries), mapping_chunk):
+            hidro_session.execute(
+                insert(table), new_entries[start:start + mapping_chunk]
+            )
+        if new_entries:
+            hidro_session.commit()
     finally:
         hidro_session.close()
-    return new_entries
+    return len(new_entries)
 
 
 def get_registro_ids(job_name: str, items):

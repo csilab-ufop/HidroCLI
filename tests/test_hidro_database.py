@@ -61,13 +61,13 @@ def hidro_db(tmp_path):
         connection.close()
 
 
-def test_handle_batch_update_updates_existing_rows_in_bulk(hidro_db):
+def test_upsert_items_updates_existing_rows_in_bulk(hidro_db):
     insert_hidro([
         Rain(EstacaoCodigo=station, Data=datetime(2024, 1, 1), Total=0.0)
         for station in range(1, 121)
     ])
 
-    entries = handle_batch_update(
+    assert upsert_items(
         "Chuvas",
         normalize_items("Chuvas", [
             {
@@ -77,9 +77,7 @@ def test_handle_batch_update_updates_existing_rows_in_bulk(hidro_db):
             }
             for station in range(1, 121)
         ]),
-    )
-
-    assert entries == []
+    ) == 0
     session = hidro_db.get_session()
     try:
         assert session.query(Rain).filter(Rain.Total == 0.0).count() == 0
@@ -110,7 +108,7 @@ def test_qual_agua_status_verify_keys_use_internal_id():
     }
 
 
-def test_handle_batch_update_keeps_distinct_discharge_measurements(hidro_db):
+def test_upsert_items_keeps_distinct_discharge_measurements(hidro_db):
     insert_hidro([
         DischargeMeasurement(
             EstacaoCodigo=1,
@@ -125,7 +123,7 @@ def test_handle_batch_update_keeps_distinct_discharge_measurements(hidro_db):
         ),
     ])
 
-    entries = handle_batch_update(
+    assert upsert_items(
         "ResumoDescarga",
         normalize_items("ResumoDescarga", [{
             "codigoestacao":     1,
@@ -138,13 +136,14 @@ def test_handle_batch_update_keeps_distinct_discharge_measurements(hidro_db):
             "Vazao (m3/s)":      9.0,
             "Vel_Media (m/s)":   6.0,
         }]),
-    )
+    ) == 1
 
-    assert len(entries) == 1
-    assert entries[0].Vazao == 9.0
-
-    insert_hidro(entries)
     assert _count_rows(DischargeMeasurement) == 2
+    session = hidro_db.get_session()
+    try:
+        assert session.query(DischargeMeasurement).filter_by(Vazao=9.0).count() == 1
+    finally:
+        session.close()
 
 
 def test_write_data_reuses_existing_qual_agua_registro_id(hidro_db):
@@ -160,7 +159,7 @@ def test_write_data_reuses_existing_qual_agua_registro_id(hidro_db):
     assert _count_rows(WaterQualityStatus) == 1
 
 
-def test_handle_batch_update_spans_multiple_chunks(hidro_db):
+def test_upsert_items_spans_multiple_chunks(hidro_db):
     items = [
         {
             "codigoestacao":  station,
@@ -170,21 +169,19 @@ def test_handle_batch_update_spans_multiple_chunks(hidro_db):
         for station in range(1, 2501)
     ]
 
-    entries = handle_batch_update("Chuvas", normalize_items("Chuvas", items))
-    assert len(entries) == 2500
-    insert_hidro(entries)
+    assert upsert_items("Chuvas", normalize_items("Chuvas", items)) == 2500
     assert _count_rows(Rain) == 2500
 
-    assert handle_batch_update("Chuvas", normalize_items("Chuvas", items)) == []
+    assert upsert_items("Chuvas", normalize_items("Chuvas", items)) == 0
     assert _count_rows(Rain) == 2500
 
 
-def test_handle_batch_update_returns_only_new_entries(hidro_db):
+def test_upsert_items_inserts_new_and_updates_existing(hidro_db):
     insert_hidro([
         Rain(EstacaoCodigo=1, Data=datetime(2024, 1, 1), Total=10.0),
     ])
 
-    entries = handle_batch_update(
+    assert upsert_items(
         "Chuvas",
         normalize_items("Chuvas", [
             {
@@ -198,15 +195,14 @@ def test_handle_batch_update_returns_only_new_entries(hidro_db):
                 "Total":          7.0,
             },
         ]),
-    )
-
-    assert len(entries) == 1
-    assert entries[0].EstacaoCodigo == 2
+    ) == 1
 
     session = hidro_db.get_session()
     try:
         first = session.query(Rain).filter(Rain.EstacaoCodigo == 1).one()
         assert first.Total == 42.0
-        assert session.query(Rain).count() == 1
+        second = session.query(Rain).filter(Rain.EstacaoCodigo == 2).one()
+        assert second.Total == 7.0
+        assert session.query(Rain).count() == 2
     finally:
         session.close()

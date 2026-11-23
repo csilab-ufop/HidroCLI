@@ -39,8 +39,8 @@ class Config(NamedTuple):
     """Frozen run configuration built once from command-line arguments.
 
     Holds the user-facing settings that would otherwise live as mutable module
-    globals. ``JOB_CHUNK_SIZE`` and ``SERVER_ERROR_BACKOFF`` stay plain module
-    constants in ``hidrocli.jobs.runner``: they are tuning knobs, not CLI flags.
+    globals. ``BULK_SIZE`` stays a plain module constant in
+    ``hidrocli.jobs.runner``: it is a tuning knob, not a CLI flag.
     """
 
     LOG_LEVEL:   str  = "INFO"

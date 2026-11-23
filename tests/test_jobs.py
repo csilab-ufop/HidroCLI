@@ -224,7 +224,7 @@ def test_filter_repeated_series_items(job_config):
 @patch('hidrocli.jobs.runner.process_period')
 def test_create_series_jobs_inserts_in_chunks(mock_period, monkeypatch):
     _set_config(monkeypatch, MAX_WORKERS=2, BATCH_SIZE=3)
-    monkeypatch.setattr(hidrocli.jobs.runner, "JOB_CHUNK_SIZE", 3)
+    monkeypatch.setattr(hidrocli.jobs.runner, "BULK_SIZE", 3)
 
     def fake_period(station, start, end, job_config):
         return [
@@ -280,6 +280,31 @@ def test_trigger_job_streams_jobs(mock_iter, mock_handle, mock_writer,
         hidrocli.jobs.runner.JobConfig.Series.RAIN, ["filter"], 5
     )
     mock_queue.put.assert_called_once()
+
+
+def test_adaptive_limiter_grows_and_halves():
+    limiter = hidrocli.jobs.runner._AdaptiveLimiter(initial=4, maximum=8)
+
+    assert limiter.limit == 4
+    assert limiter.slow_start is True
+
+    # Slow start doubles the limit once a full window succeeds.
+    for _ in range(4):
+        limiter.success()
+    assert limiter.limit == 8
+
+    limiter.success()
+    assert limiter.limit == 8
+
+    # A throttle halves and switches to additive growth.
+    limiter.throttled()
+    assert limiter.limit == 4
+    assert limiter.slow_start is False
+    assert limiter.pause_until > 0
+
+    for _ in range(hidrocli.jobs.runner.ADAPTIVE_INCREASE_AFTER):
+        limiter.success()
+    assert limiter.limit == 5
 
 
 @patch('hidrocli.jobs.runner.write_queue')
@@ -395,13 +420,13 @@ def test_handle_job_request_skips_on_request_error(mock_token, mock_request,
     mock_queue.put.assert_not_called()
 
 
-@patch('hidrocli.jobs.runner._backoff_pool')
+@patch('hidrocli.jobs.runner._throttle')
 @patch('hidrocli.jobs.runner.write_queue')
 @patch('hidrocli.jobs.runner.request_job_data', side_effect=_http_error(504))
 @patch('hidrocli.jobs.runner.get_token', return_value="token")
 def test_handle_job_request_skips_on_server_error(mock_token, mock_request,
-                                                  mock_queue, mock_backoff):
-    """A 5xx server error leaves the job PENDING and backs off the pool."""
+                                                  mock_queue, mock_throttle):
+    """A 5xx server error leaves the job PENDING and throttles the pool."""
 
     config = hidrocli.jobs.runner.JobConfig.Series.GRANULOMETRY
     job    = MagicMock()
@@ -415,7 +440,7 @@ def test_handle_job_request_skips_on_server_error(mock_token, mock_request,
     assert job.Status  == hidrocli.jobs.runner.JobConfig.Status.PENDING.value
     assert job.Retries == 0
     mock_queue.put.assert_not_called()
-    mock_backoff.assert_called_once()
+    mock_throttle.assert_called_once()
 
 
 @patch('hidrocli.jobs.runner.write_queue')
@@ -494,32 +519,6 @@ def test_is_sql_grammar():
     assert not hidrocli.jobs.runner._is_sql_grammar(
         _http_error(417, {"code": 417, "message": "some other error"}).response
     )
-
-
-def test_backoff_pool_sets_future_until(monkeypatch):
-    """A server error moves the pool-wide backoff window into the future."""
-
-    monkeypatch.setattr(hidrocli.jobs.runner, "SERVER_ERROR_BACKOFF", 5)
-    monkeypatch.setattr(hidrocli.jobs.runner, "_backoff_until", 0.0)
-    before = hidrocli.jobs.runner.time.monotonic()
-
-    hidrocli.jobs.runner._backoff_pool()
-
-    assert hidrocli.jobs.runner._backoff_until >= before + 5
-
-
-@patch('hidrocli.jobs.runner.time.sleep')
-def test_wait_backoff_sleeps_during_window(mock_sleep, monkeypatch):
-    """Workers sleep while a pool-wide backoff window is active."""
-
-    monkeypatch.setattr(
-        hidrocli.jobs.runner, "_backoff_until",
-        hidrocli.jobs.runner.time.monotonic() + 10,
-    )
-
-    hidrocli.jobs.runner._wait_backoff()
-
-    mock_sleep.assert_called_once()
 
 
 def test_filter_cross_section_returns_empty_without_ana_id():

@@ -26,13 +26,13 @@
 Provides routines to request and sync data on database.
 """
 
-import logging, os, sys, time
+import logging, os, random, sys, time
 logger = logging.getLogger(__name__)
 
 from concurrent.futures import (
     ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED,
 )
-from threading          import Thread, Lock
+from threading          import Thread, Lock, Condition
 from queue              import Queue
 
 from datetime    import datetime, timedelta, date
@@ -51,8 +51,8 @@ from hidrocli.database.client import (
 )
 from hidrocli.database.hidro import (
     get_period, get_qual_agua_ids, get_registro_ids, get_states,
-    handle_batch_update, insert_hidro, make_vertical_cross_section,
-    normalize_items, coerce_value,
+    insert_hidro, make_vertical_cross_section, normalize_items, coerce_value,
+    upsert_items,
 )
 
 from requests.exceptions import HTTPError, RequestException
@@ -70,12 +70,99 @@ CONFIG: Config = Config()
 """Frozen run configuration, set once by :func:`run` before jobs execute."""
 
 
-JOB_CHUNK_SIZE = 5000
-"""Minimum number of jobs to accumulate before one bulk insert."""
+BULK_SIZE = 5000
+"""Minimum jobs or rows accumulated before one bulk write.
+
+Independent of ``--batch-size`` (which bounds the scheduling page and queue):
+a larger batch means fewer SQLite commits without hydrating more jobs.
+"""
 
 
 PROGRESS_INTERVAL = 10.0
 """Seconds between progress lines emitted by the writer thread."""
+
+
+ADAPTIVE_INITIAL = 8
+"""Initial in-flight request limit for adaptive concurrency."""
+
+
+ADAPTIVE_INCREASE_AFTER = 5
+"""Successful requests before the additive limit grows by one, after a throttle."""
+
+
+ADAPTIVE_PAUSE = 5.0
+"""Base pause (seconds) after the API asks us to slow down."""
+
+
+class _AdaptiveLimiter:
+    """Limit in-flight requests and adapt to server back-pressure.
+
+    The limit doubles each full window of successes during the initial ramp
+    (TCP-style slow start), then grows additively after a throttle. A throttle
+    response (429/5xx) halves the limit and applies a short jittered pause so
+    retries do not synchronise. This avoids bursting the API without a fixed
+    cap while still reaching the server's capacity quickly.
+    """
+
+    def __init__(self, initial: int, maximum: int):
+        self.maximum   = max(1, maximum)
+        self.limit     = max(1, min(initial, self.maximum))
+        self.active    = 0
+        self.successes = 0
+        self.slow_start  = True
+        self.pause_until = 0.0
+        self.condition = Condition()
+
+    def acquire(self) -> None:
+        """Block until an in-flight slot is available."""
+
+        with self.condition:
+            while True:
+                now = time.monotonic()
+                if self.active < self.limit and now >= self.pause_until:
+                    self.active += 1
+                    return
+                timeout = self.pause_until - now if now < self.pause_until else None
+                self.condition.wait(timeout=timeout)
+
+    def release(self) -> None:
+        """Return an in-flight slot."""
+
+        with self.condition:
+            self.active -= 1
+            self.condition.notify()
+
+    def success(self) -> None:
+        """Record a successful request and grow the limit."""
+
+        with self.condition:
+            if self.limit >= self.maximum:
+                return
+
+            self.successes += 1
+            if self.slow_start:
+                # Double once a full window of the current limit succeeds.
+                if self.successes >= self.limit:
+                    self.limit = min(self.maximum, self.limit * 2)
+                    self.successes = 0
+                    self.condition.notify_all()
+            elif self.successes >= ADAPTIVE_INCREASE_AFTER:
+                self.limit += 1
+                self.successes = 0
+                self.condition.notify()
+
+    def throttled(self) -> None:
+        """Halve the limit and pause briefly after a throttle response."""
+
+        with self.condition:
+            self.slow_start = False
+            self.limit = max(1, self.limit // 2)
+            self.successes = 0
+            pause = ADAPTIVE_PAUSE * random.uniform(0.5, 1.5)
+            self.pause_until = max(
+                self.pause_until, time.monotonic() + pause
+            )
+            self.condition.notify_all()
 
 
 class JobConfig:
@@ -100,6 +187,24 @@ def _batch_size() -> int:
     """Return the configured write/job chunk size, with a safe default."""
 
     return max(1, CONFIG.BATCH_SIZE)
+
+
+def _thread_limit() -> int:
+    """Return the OS soft limit on concurrent threads, minus a small reserve.
+
+    Clamps ``--max-workers`` for request threads. The ANA API can still
+    saturate or return HTTP 503 well before this limit is reached.
+    """
+
+    try:
+        import resource
+        soft, _ = resource.getrlimit(resource.RLIMIT_NPROC)
+    except (AttributeError, ImportError, ValueError, OSError):
+        return os.cpu_count() or 1
+
+    if soft < 0:  # RLIM_INFINITY
+        return os.cpu_count() or 1
+    return max(1, soft - 8)
 
 
 def _chunked(items, size: int):
@@ -173,6 +278,9 @@ def _as_datetime(value):
 
 _token_cache: Optional[Token] = None
 """Private Token global to control expiration time."""
+
+_limiter: Optional[_AdaptiveLimiter] = None
+"""Active adaptive concurrency limiter for the current request phase."""
 
 def get_token() -> Token.Token:
     """Authenticate and return access token.
@@ -308,8 +416,8 @@ def create_series_jobs(stations_data: List, job_config: JobConfig) -> None:
     Jobs are written in bounded chunks to keep memory flat.
     """
     start      = time.time()
-    chunk_size = max(_batch_size(), JOB_CHUNK_SIZE)
-    workers    = max(1, CONFIG.MAX_WORKERS)
+    chunk_size = max(_batch_size(), BULK_SIZE)
+    workers    = min(max(1, CONFIG.MAX_WORKERS), os.cpu_count() or 1)
     batch      = []
     created    = 0
 
@@ -504,18 +612,27 @@ def _report_future(future) -> None:
 
 
 def trigger_job(job_config: JobConfig, filters, total: int) -> None:
-    """ Triggers an Thread Worker for each pending or falied job entrie in DB for a given JobConfig.
+    """Request every pending or failed job of one JobConfig.
 
     Jobs are streamed in pages and only a bounded number of futures is kept in
     flight. The queue is bounded so slow writes apply backpressure to workers.
+    A tqdm bar reports jobs completed against ``total`` on a terminal; when
+    output is redirected the writer's throttled heartbeat lines report progress
+    instead.
 
-    A tqdm bar reports jobs completed against ``total`` on a terminal. When
-    output is redirected the bar is disabled and the writer's throttled
-    heartbeat lines report progress instead.
+    Network runs use an adaptive in-flight limiter so the API is not bursted.
     """
 
     batch_size = _batch_size()
     workers    = max(1, CONFIG.MAX_WORKERS)
+    global _limiter
+    workers = min(workers, _thread_limit())
+    if CONFIG.READ_JSON:
+        _limiter = None
+    else:
+        _limiter = _AdaptiveLimiter(
+            initial=min(workers, ADAPTIVE_INITIAL), maximum=workers
+        )
     write_queue.maxsize = batch_size
 
     bar = _make_progress_bar(total, f"Request {job_config}", "job")
@@ -537,6 +654,8 @@ def trigger_job(job_config: JobConfig, filters, total: int) -> None:
         for future in as_completed(pending):
             _report_future(future)
             bar.update(1)
+
+    _limiter = None
 
     finish_queue = QueueData(
         job_config  = job_config,
@@ -561,30 +680,6 @@ def trigger_job(job_config: JobConfig, filters, total: int) -> None:
 
 
 token_lock = Lock()
-
-SERVER_ERROR_BACKOFF = 60.0
-"""Seconds the whole worker pool pauses after a 5xx server response."""
-
-_backoff_lock = Lock()
-_backoff_until = 0.0
-"""Monotonic timestamp until which every worker pauses between requests."""
-
-
-def _backoff_pool() -> None:
-    """Make every worker pause until the backoff window expires."""
-
-    global _backoff_until
-    with _backoff_lock:
-        _backoff_until = max(_backoff_until, time.monotonic() + SERVER_ERROR_BACKOFF)
-
-
-def _wait_backoff() -> None:
-    """Sleep if a previous 5xx response put the pool in a cooldown window."""
-
-    with _backoff_lock:
-        remaining = _backoff_until - time.monotonic()
-    if remaining > 0:
-        time.sleep(remaining)
 
 
 def _mark_failed(job: HidroJob, job_config: JobConfig) -> None:
@@ -611,6 +706,15 @@ def _is_sql_grammar(response) -> bool:
             and "SQLGrammarException" in str(body.get("message", "")))
 
 
+def _throttle() -> None:
+    """Slow the request pool after the API rejects or rate-limits a request."""
+
+    if _limiter is not None:
+        _limiter.throttled()
+    else:
+        time.sleep(ADAPTIVE_PAUSE)
+
+
 def _handle_http_error(job: HidroJob, job_config: JobConfig, e) -> bool:
     """Apply an HTTPError to the job. Return True when the job is skipped."""
 
@@ -618,8 +722,12 @@ def _handle_http_error(job: HidroJob, job_config: JobConfig, e) -> bool:
     if code == 401:
         logger.warning(f"[WORKER JOB {job.ID}]: Unauthorized, skipping.")
         return True
+    if code == 429:
+        _throttle()
+        logger.warning(f"[WORKER JOB {job.ID}]: Rate limited, retrying later.")
+        return True
     if code is not None and 500 <= code < 600:
-        _backoff_pool()
+        _throttle()
         logger.verbose(f"[WORKER JOB {job.ID}]: Server error {code}, skipping.")
         return True
     if code == 417 and _is_sql_grammar(e.response):
@@ -651,22 +759,32 @@ def _process_success(job: HidroJob, job_config: JobConfig, items):
 
 
 def handle_job_request(job: HidroJob, job_config: JobConfig) -> None:
-    """ Request data of an HidroJob.
-    Validate data on success return, and convert to ORM model before writing on Queue.
+    """Request one job, validate it and enqueue the result.
+
+    Skips the write for unauthorized or transient request errors, leaving the
+    job PENDING so a later run retries it.
     """
 
-    _wait_backoff()
     start = time.time()
     success, items = False, []
+    limiter = _limiter
     try:
         with token_lock:
             token = get_token()
-        success, items = request_job_data(
-            job_config, token, job.to_params(CONFIG.FILTER),
-            save_json = CONFIG.SAVE_JSON,
-            json_dir  = CONFIG.JSON_DIR,
-            read_json = CONFIG.READ_JSON,
-        )
+        if limiter is not None:
+            limiter.acquire()
+        try:
+            success, items = request_job_data(
+                job_config, token, job.to_params(CONFIG.FILTER),
+                save_json = CONFIG.SAVE_JSON,
+                json_dir  = CONFIG.JSON_DIR,
+                read_json = CONFIG.READ_JSON,
+            )
+        finally:
+            if limiter is not None:
+                limiter.release()
+        if limiter is not None:
+            limiter.success()
     except HTTPError as e:
         if _handle_http_error(job, job_config, e):
             return
@@ -715,9 +833,20 @@ def db_writer(interactive=False) -> None:
     batch_elapsed  = 0
     batch_start_time = None
     last_report = time.monotonic()
+    flush_at    = max(CONFIG.BATCH_SIZE, BULK_SIZE)
+    failed      = None
+
     while True:
         try:
             job_config, job, data, worker_time, stop_signal = write_queue.get()
+
+            # After a write failure, keep draining so producers do not block
+            # forever on the bounded queue, then stop on the finish signal.
+            if failed is not None:
+                if stop_signal:
+                    break
+                continue
+
             worker_elapsed += worker_time
             if job:
                 batch_buffer["jobs"].append(job)
@@ -735,8 +864,8 @@ def db_writer(interactive=False) -> None:
                             f"{processed_rows} rows, {processed_jobs} jobs")
                 last_report = now
 
-            if (len(batch_buffer["data"]) >= CONFIG.BATCH_SIZE or
-                len(batch_buffer["jobs"]) >= CONFIG.BATCH_SIZE or stop_signal):
+            if (len(batch_buffer["data"]) >= flush_at or
+                len(batch_buffer["jobs"]) >= flush_at or stop_signal):
                 if batch_start_time is not None:
                     batch_elapsed = time.time() - batch_start_time
                 total_data     += len(batch_buffer["data"])
@@ -761,8 +890,8 @@ def db_writer(interactive=False) -> None:
                 break
 
         except Exception as e:
+            failed = e
             logger.error(f"[WRITER]: db_writer exception: {e}")
-            raise
 
         finally:
             write_queue.task_done()
@@ -796,26 +925,10 @@ def _record_provenance(job_config, data_table, items, data_ids=None):
     upsert_job_records(records)
 
 
-def _upsert(data_table, items):
-    """Insert or update ``items`` and return the newly created rows."""
-
-    entries = handle_batch_update(data_table, items)
-    if entries:
-        insert_hidro(entries, expire=False)
-    return entries
-
-
-def _water_quality_status_items(items, entries):
+def _water_quality_status_items(items):
     """Attach each item's ``QualAguaID`` and keep rows with a resolved parent."""
 
-    lookup = {(entry.EstacaoCodigo, entry.Data): entry.RegistroID
-              for entry in entries}
-    missing = [
-        item for item in items
-        if (item['EstacaoCodigo'], item['Data']) not in lookup
-    ]
-    if missing:
-        lookup.update(get_qual_agua_ids(missing))
+    lookup = get_qual_agua_ids(items)
 
     for item in items:
         item['QualAguaID'] = lookup.get(
@@ -846,7 +959,6 @@ def write_data(job_config: JobConfig, jobs: List[HidroJob], items) -> float:
     """Insert data into DB and update the jobs as well. """
 
     start_time = time.perf_counter()
-    entries = []
 
     if items:
         filtered_items = items
@@ -858,21 +970,21 @@ def write_data(job_config: JobConfig, jobs: List[HidroJob], items) -> float:
                   JobConfig.Series.FLOW_RATE      | JobConfig.Series.SEDIMENTS         |
                   JobConfig.Series.STAGE          | JobConfig.Series.GRANULOMETRY      |
                   JobConfig.Series.DISCHARGE_FLOW | JobConfig.Base()):
-                entries = _upsert(job_config, filtered_items)
+                upsert_items(job_config, filtered_items)
                 _record_provenance(job_config, job_config, filtered_items)
 
             case JobConfig.Series.WATER_QUALITY:
-                entries = _upsert(job_config, filtered_items)
+                upsert_items(job_config, filtered_items)
                 _record_provenance(job_config, job_config, filtered_items)
 
-                status_items = _water_quality_status_items(filtered_items, entries)
+                status_items = _water_quality_status_items(filtered_items)
                 if status_items:
-                    _upsert(f'{job_config}Status', status_items)
+                    upsert_items(f'{job_config}Status', status_items)
                     _record_provenance(job_config, f'{job_config}Status', status_items)
 
             case JobConfig.Series.CROSS_SECTION:
                 parent_items = filtered_items
-                entries = _upsert(job_config, parent_items)
+                upsert_items(job_config, parent_items)
                 parent_ids = get_registro_ids(str(job_config), parent_items)
                 _record_provenance(job_config, job_config, parent_items, parent_ids)
 
@@ -891,10 +1003,7 @@ def write_data(job_config: JobConfig, jobs: List[HidroJob], items) -> float:
     if jobs:
         update_jobs(jobs, job_config)
         logger.trace(f"[WRITER {job_config}]: Updated {len(jobs)} jobs")
-    elapsed_time = time.perf_counter() - start_time
-    if entries:
-        logger.trace(f"[WRITER {job_config}]: Inserted {len(entries)} entries in {elapsed_time} seconds")
-    return elapsed_time
+    return time.perf_counter() - start_time
 
 
 def validate_series_items(job, job_config: JobConfig, items):
