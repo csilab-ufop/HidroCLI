@@ -11,7 +11,7 @@ license = "BSD-2-Clause"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 authors = [{ name = "ctxmc", email = "git@thecortexmancer.org" }]
-dependencies = ["requests", "sqlalchemy", "alembic>=1.13"]
+dependencies = ["requests", "sqlalchemy", "alembic>=1.13", "tqdm"]
 
 [project.urls]
 Homepage = "https://github.com/csilab-ufop/hidrocli"

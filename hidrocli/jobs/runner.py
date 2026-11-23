@@ -26,7 +26,7 @@
 Provides routines to request and sync data on database.
 """
 
-import logging, time
+import logging, os, sys, time
 logger = logging.getLogger(__name__)
 
 from concurrent.futures import (
@@ -56,6 +56,8 @@ from hidrocli.database.hidro import (
 )
 
 from requests.exceptions import HTTPError, RequestException
+
+from tqdm import tqdm
 
 from hidrocli.config import Config
 
@@ -108,6 +110,46 @@ def _chunked(items, size: int):
         yield items[start:start + size]
 
 
+def _interactive() -> bool:
+    """True when stderr is a real terminal that supports in-place redraws.
+
+    ``TERM=dumb`` (or an unset ``TERM``) marks a terminal that cannot redraw
+    a line in place, so it falls back to the line-based heartbeat instead.
+    """
+
+    if not sys.stderr.isatty():
+        return False
+    return os.environ.get("TERM", "") not in ("", "dumb")
+
+
+def _make_progress_bar(total: int, desc: str, unit: str):
+    """Return a tqdm bar, disabled when stderr is not a terminal.
+
+    ``unit`` is prefixed with a space so the rate renders as ``12.3 job/s``
+    rather than tqdm's cramped ``12.3job/s``. The remaining-time estimate is
+    dropped so the bar reads ``[elapsed, rate]`` instead of ``[elapsed<eta]``.
+    """
+
+    return tqdm(
+        total=total,
+        desc=desc,
+        unit=f" {unit}",
+        bar_format=(
+            "{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} "
+            "[{elapsed}, {rate_fmt}{postfix}]"
+        ),
+        disable=not _interactive(),
+        file=sys.stderr,
+    )
+
+
+def _announce(message: str) -> None:
+    """Log an INFO line, suppressed while a live progress bar is active."""
+
+    if not _interactive():
+        logger.info(message)
+
+
 def _yesterday() -> datetime:
     """Return yesterday at midnight."""
 
@@ -146,7 +188,7 @@ def get_token() -> Token.Token:
         logger.verbose(f"Token is valid. ({_token_cache.Expires})")
         return _token_cache.Token
 
-    logger.info("No valid token present, requesting.")
+    _announce("No valid token present, requesting.")
     credentials = get_credentials()
     token, expires = request_token(credentials.ID, credentials.Password)
     if _token_cache is None:
@@ -159,7 +201,7 @@ def get_token() -> Token.Token:
     else:
         add_token(credentials.ID, token, expires)
 
-    logger.info("Token acquired and cached.")
+    _announce("Token acquired and cached.")
     return token
 
 
@@ -172,7 +214,7 @@ def check_base_job(job_config: JobConfig.Base) -> None:
 
     filters = create_job_filters(job_config, None, last_check=False)
     if not count_job(job_config, filters):
-        logger.info(f"Creating jobs for {job_config}.")
+        _announce(f"Creating jobs for {job_config}.")
         job_model = get_job_model(job_config)
         jobs = []
         match job_config:
@@ -197,11 +239,11 @@ def check_base_job(job_config: JobConfig.Base) -> None:
         filters = create_job_filters(job_config, status, last_check=True)
         count   = count_job(job_config, filters)
         if count:
-            logger.info(f"Initiating jobs for {job_config}")
-            trigger_job(job_config, filters)
+            _announce(f"Initiating jobs for {job_config}")
+            trigger_job(job_config, filters, count)
             check_base_job(job_config)
         else:
-            logger.info(f"No pending jobs for {job_config}.")
+            _announce(f"No pending jobs for {job_config}.")
 
 
 def check_series_job(job_config: JobConfig) -> None:
@@ -229,7 +271,7 @@ def check_series_job(job_config: JobConfig) -> None:
     existing = get_station_ids(job_config, CONFIG.STATIONS)
     missing  = [data for data in period_data if data[0] not in existing]
     if missing:
-        logger.info(f"Creating jobs from {len(missing)} stations for {job_config}")
+        _announce(f"Creating jobs from {len(missing)} stations for {job_config}")
         create_series_jobs(missing, job_config)
 
     if CONFIG.INITIAL_DATE is not None or CONFIG.FINAL_DATE is not None:
@@ -253,11 +295,11 @@ def trigger_series_jobs(job_config: JobConfig) -> None:
                                  final_date=CONFIG.FINAL_DATE)
     count = count_job(job_config, filters)
     if count:
-        logger.info(f"Initiating {count} jobs for {job_config}")
-        trigger_job(job_config, filters)
+        _announce(f"Initiating {count} jobs for {job_config}")
+        trigger_job(job_config, filters, count)
         trigger_series_jobs(job_config)
     else:
-        logger.info(f"No pending jobs for {job_config}.")
+        _announce(f"No pending jobs for {job_config}.")
 
 
 def create_series_jobs(stations_data: List, job_config: JobConfig) -> None:
@@ -271,18 +313,25 @@ def create_series_jobs(stations_data: List, job_config: JobConfig) -> None:
     batch      = []
     created    = 0
 
+    bar = _make_progress_bar(
+        len(stations_data), f"Create {job_config}", "station"
+    )
+
     def collect(future):
         nonlocal created
         try:
             processed_jobs = future.result()
         except Exception as e:
             logger.error(f"Error processing period: {e}")
+            bar.update(1)
             return
         batch.extend(processed_jobs)
         if len(batch) >= chunk_size:
             insert_jobs_bulk(batch)
             created += len(batch)
             batch.clear()
+        bar.set_postfix(jobs=created + len(batch), refresh=False)
+        bar.update(1)
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         pending = set()
@@ -299,8 +348,10 @@ def create_series_jobs(stations_data: List, job_config: JobConfig) -> None:
         insert_jobs_bulk(batch)
         created += len(batch)
 
+    bar.close()
+
     elapsed = time.time() - start
-    logger.info(f"Created {created} jobs for {job_config} in {elapsed:.2f} seconds")
+    _announce(f"Created {created} jobs for {job_config} in {elapsed:.2f} seconds")
 
 
 def process_period(station_code, start_date, end_date, job_config):
@@ -424,7 +475,7 @@ def update_series_job_windows(job_config: JobConfig, stations_data) -> None:
         inserted += len(new_jobs)
 
     elapsed = time.time() - start_time
-    logger.info(
+    _announce(
         f"Updated {updated} and inserted {inserted} jobs for {job_config} "
         f"in {elapsed:.2f} seconds"
     )
@@ -452,18 +503,25 @@ def _report_future(future) -> None:
         logger.error(f"[WORKER]: {e}")
 
 
-def trigger_job(job_config: JobConfig, filters) -> None:
+def trigger_job(job_config: JobConfig, filters, total: int) -> None:
     """ Triggers an Thread Worker for each pending or falied job entrie in DB for a given JobConfig.
 
     Jobs are streamed in pages and only a bounded number of futures is kept in
     flight. The queue is bounded so slow writes apply backpressure to workers.
+
+    A tqdm bar reports jobs completed against ``total`` on a terminal. When
+    output is redirected the bar is disabled and the writer's throttled
+    heartbeat lines report progress instead.
     """
 
     batch_size = _batch_size()
     workers    = max(1, CONFIG.MAX_WORKERS)
     write_queue.maxsize = batch_size
 
-    writer = Thread(target=db_writer, daemon=True)
+    bar = _make_progress_bar(total, f"Request {job_config}", "job")
+    interactive = not bar.disable
+
+    writer = Thread(target=db_writer, args=(interactive,), daemon=True)
     writer.start()
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -474,9 +532,11 @@ def trigger_job(job_config: JobConfig, filters) -> None:
                 done, pending = wait(pending, return_when=FIRST_COMPLETED)
                 for future in done:
                     _report_future(future)
+                bar.update(len(done))
 
         for future in as_completed(pending):
             _report_future(future)
+            bar.update(1)
 
     finish_queue = QueueData(
         job_config  = job_config,
@@ -487,9 +547,26 @@ def trigger_job(job_config: JobConfig, filters) -> None:
     )
     write_queue.put(finish_queue)
     writer.join()
+
     status_map = {1: "Pending", 2: "Failed", 3: "Invalid", 5: "Completed"}
     counts = {status_map.get(s, f"Unknown({s})"): c for s, c in count_job_by_status(job_config)}
-    logger.info(f"Pending: {counts.get('Pending', 0)}, Failed: {counts.get('Failed', 0)}, Invalid: {counts.get('Invalid', 0)}, Completed: {counts.get('Completed', 0)}")
+
+    if interactive:
+        bar.set_postfix_str(
+            f"Pending={counts.get('Pending', 0)}, "
+            f"Failed={counts.get('Failed', 0)}, "
+            f"Invalid={counts.get('Invalid', 0)}, "
+            f"Completed={counts.get('Completed', 0)}",
+            refresh=False,
+        )
+    bar.close()
+
+    _announce(
+        f"Pending: {counts.get('Pending', 0)}, "
+        f"Failed: {counts.get('Failed', 0)}, "
+        f"Invalid: {counts.get('Invalid', 0)}, "
+        f"Completed: {counts.get('Completed', 0)}"
+    )
 
 
 token_lock = Lock()
@@ -628,9 +705,13 @@ def handle_job_request(job: HidroJob, job_config: JobConfig) -> None:
     ))
 
 
-def db_writer() -> None:
+def db_writer(interactive=False) -> None:
     """ Single Writer Thread running during an Job.
     Consumes an Queue writen by each worker and write data in batches.
+
+    When ``interactive`` is true (a live tqdm bar is active), the writer skips
+    the throttled heartbeat and final summary, since the bar reports progress.
+    Otherwise (output is redirected) it emits those lines.
     """
 
     batch_buffer = {"jobs": [], "data": []}
@@ -655,7 +736,8 @@ def db_writer() -> None:
                     batch_start_time = time.time()
 
             now = time.monotonic()
-            if not stop_signal and now - last_report >= PROGRESS_INTERVAL:
+            if (not interactive and not stop_signal and
+                    now - last_report >= PROGRESS_INTERVAL):
                 processed_rows = total_data + len(batch_buffer["data"])
                 processed_jobs = total_jobs + len(batch_buffer["jobs"])
                 logger.info(f"[WRITER {job_config}]: "
@@ -681,9 +763,10 @@ def db_writer() -> None:
                 batch_start_time = None
 
             if stop_signal:
-                logger.info(f"[WRITER {job_config}]: {total_data} rows, "
-                            f"{total_jobs} jobs in {worker_elapsed:.2f}s worker / "
-                            f"{total_elapsed:.2f}s writer")
+                if not interactive:
+                    logger.info(f"[WRITER {job_config}]: {total_data} rows, "
+                                f"{total_jobs} jobs in {worker_elapsed:.2f}s worker / "
+                                f"{total_elapsed:.2f}s writer")
                 break
 
         except Exception as e:
@@ -932,21 +1015,21 @@ def run(config: Config):
     rule = "-" * 40 + "\n"  # trailing newline leaves a blank line for navigation
 
     for job in JobConfig.Base:
-        logger.info(rule)
+        _announce(rule)
         check_base_job(job)
 
     if CONFIG.SKIP_SERIES_JOBS:
-        logger.info(rule)
-        logger.info("Skiping series jobs.")
+        _announce(rule)
+        _announce("Skiping series jobs.")
         return
 
     for job in JobConfig.Series:
-        logger.info(rule)
+        _announce(rule)
         if job in CONFIG.SKIP_FOR:
-            logger.info(f"Skiping job for {job}.")
+            _announce(f"Skiping job for {job}.")
             continue
         if len(CONFIG.RUN_FOR) > 0:
             if job not in CONFIG.RUN_FOR:
-                logger.info(f"Skiping job for {job}.")
+                _announce(f"Skiping job for {job}.")
                 continue
         check_series_job(job)

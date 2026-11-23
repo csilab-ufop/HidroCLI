@@ -32,6 +32,8 @@ import re
 from datetime import datetime
 from typing import NamedTuple, Optional
 
+from tqdm import tqdm
+
 
 class Config(NamedTuple):
     """Frozen run configuration built once from command-line arguments.
@@ -175,13 +177,27 @@ def setup_logger(config: Config = Config()):
     VERBOSE = 5
     setattr(logging.Logger, 'verbose', _make_logger(VERBOSE))
     logging.addLevelName(VERBOSE, 'VERBOSE')
-    handler = logging.StreamHandler()
+    handler = _TqdmLoggingHandler()
     handler.setFormatter(_LogFormatter())
     level = logging.CRITICAL + 1 if config.LOG_LEVEL == 'NONE' else config.LOG_LEVEL
     logging.basicConfig(
         level=level,
         handlers=[handler]
     )
+
+
+class _TqdmLoggingHandler(logging.StreamHandler):
+    """Write log lines through ``tqdm`` so they do not overwrite a live bar.
+
+    Both the handler and the progress bar target stderr, so the bar is cleared,
+    the line is written, and the bar is redrawn underneath.
+    """
+
+    def emit(self, record):
+        try:
+            tqdm.write(self.format(record), file=self.stream)
+        except Exception:
+            self.handleError(record)
 
 
 class _LogFormatter(logging.Formatter):

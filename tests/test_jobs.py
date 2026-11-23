@@ -272,7 +272,7 @@ def test_trigger_job_streams_jobs(mock_iter, mock_handle, mock_writer,
     _set_config(monkeypatch, MAX_WORKERS=2, BATCH_SIZE=5)
 
     hidrocli.jobs.runner.trigger_job(
-        hidrocli.jobs.runner.JobConfig.Series.RAIN, ["filter"]
+        hidrocli.jobs.runner.JobConfig.Series.RAIN, ["filter"], 20
     )
 
     assert mock_handle.call_count == 20
@@ -665,7 +665,7 @@ def test_trigger_series_jobs_retries_until_none(mock_count, mock_trigger,
 
     assert mock_count.call_count == 2
     mock_trigger.assert_called_once_with(
-        hidrocli.jobs.runner.JobConfig.Series.RAIN, []
+        hidrocli.jobs.runner.JobConfig.Series.RAIN, [], 2
     )
     assert mock_filters.call_args.args[1] == [
         hidrocli.jobs.runner.JobConfig.Status.FAILED.value,
