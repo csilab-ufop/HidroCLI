@@ -72,6 +72,10 @@ JOB_CHUNK_SIZE = 5000
 """Minimum number of jobs to accumulate before one bulk insert."""
 
 
+PROGRESS_INTERVAL = 10.0
+"""Seconds between progress lines emitted by the writer thread."""
+
+
 class JobConfig:
     """ Job name groups and status. """
 
@@ -485,7 +489,7 @@ def trigger_job(job_config: JobConfig, filters) -> None:
     writer.join()
     status_map = {1: "Pending", 2: "Failed", 3: "Invalid", 5: "Completed"}
     counts = {status_map.get(s, f"Unknown({s})"): c for s, c in count_job_by_status(job_config)}
-    logger.info(f"Pending: {counts.get('Pending', 0)}, Failed: {counts.get('Failed', 0)}, Invalid: {counts.get('Invalid', 0)}, Completed: {counts.get('Completed', 0)}\n")
+    logger.info(f"Pending: {counts.get('Pending', 0)}, Failed: {counts.get('Failed', 0)}, Invalid: {counts.get('Invalid', 0)}, Completed: {counts.get('Completed', 0)}")
 
 
 token_lock = Lock()
@@ -638,6 +642,7 @@ def db_writer() -> None:
     insert_elapsed = 0
     batch_elapsed  = 0
     batch_start_time = None
+    last_report = time.monotonic()
     while True:
         try:
             job_config, job, data, worker_time, stop_signal = write_queue.get()
@@ -648,6 +653,14 @@ def db_writer() -> None:
                 batch_buffer["data"].extend(data)
                 if batch_start_time is None:
                     batch_start_time = time.time()
+
+            now = time.monotonic()
+            if not stop_signal and now - last_report >= PROGRESS_INTERVAL:
+                processed_rows = total_data + len(batch_buffer["data"])
+                processed_jobs = total_jobs + len(batch_buffer["jobs"])
+                logger.info(f"[WRITER {job_config}]: "
+                            f"{processed_rows} rows, {processed_jobs} jobs")
+                last_report = now
 
             if (len(batch_buffer["data"]) >= CONFIG.BATCH_SIZE or
                 len(batch_buffer["jobs"]) >= CONFIG.BATCH_SIZE or stop_signal):
@@ -660,28 +673,18 @@ def db_writer() -> None:
                                              batch_buffer["data"])
                 total_elapsed += batch_elapsed + insert_elapsed
 
-                logger.verbose(f"""[TIMER {job_config}]: """
-                               f"""Time to reach batch: {batch_elapsed}, """
-                               f"""Time to insert batch: {insert_elapsed}. """)
-
-                logger.info(f"""[WRITER {job_config}]: """
-                            f"""Total processed Data: {total_data}, """
-                            f"""Total finished Jobs: {total_jobs}. """)
-                logger.trace(f"""[TIMER {job_config}]: """
-                            f"""Total worker elapsed: {worker_elapsed}, """
-                            f"""Total writer elapsed: {total_elapsed}.""")
+                logger.trace(f"[TIMER {job_config}]: "
+                             f"batch {batch_elapsed:.2f}s, insert {insert_elapsed:.2f}s")
 
                 batch_buffer["jobs"].clear()
                 batch_buffer["data"].clear()
                 batch_start_time = None
 
             if stop_signal:
-                logger.info(f"""[WRITER]: Finished jobs for {job_config} """
-                            f"""Total processed Data: {total_data}, """
-                            f"""Total finished Jobs: {total_jobs}.""")
-                logger.info(f"""[WRITER]: Total worker elapsed: {worker_elapsed}, """
-                            f"""Total writer elapsed: {total_elapsed}.""")
-                break;
+                logger.info(f"[WRITER {job_config}]: {total_data} rows, "
+                            f"{total_jobs} jobs in {worker_elapsed:.2f}s worker / "
+                            f"{total_elapsed:.2f}s writer")
+                break
 
         except Exception as e:
             logger.error(f"[WRITER]: db_writer exception: {e}")
@@ -926,28 +929,24 @@ def run(config: Config):
 
     global CONFIG
     CONFIG = config
+    rule = "-" * 40 + "\n"  # trailing newline leaves a blank line for navigation
 
     for job in JobConfig.Base:
-        logger.info(f"====================================")
+        logger.info(rule)
         check_base_job(job)
-        logger.info(f"====================================\n")
 
     if CONFIG.SKIP_SERIES_JOBS:
-        logger.info(f"====================================")
-        logger.info(f"Skiping series jobs.\n")
-        logger.info(f"====================================")
+        logger.info(rule)
+        logger.info("Skiping series jobs.")
         return
 
     for job in JobConfig.Series:
-        logger.info(f"====================================")
+        logger.info(rule)
         if job in CONFIG.SKIP_FOR:
             logger.info(f"Skiping job for {job}.")
-            logger.info(f"====================================\n")
             continue
         if len(CONFIG.RUN_FOR) > 0:
             if job not in CONFIG.RUN_FOR:
                 logger.info(f"Skiping job for {job}.")
-                logger.info(f"====================================\n")
                 continue
         check_series_job(job)
-        logger.info(f"====================================\n")
