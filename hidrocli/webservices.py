@@ -53,7 +53,7 @@ _DATA_ENDPOINTS_MAP = {
 _BASE_JOBS = {"Bacia", "SubBacia", "Entidade", "Municipio", "Rio", "Estado"}
 
 
-def request_hidro_ws(endpoint, headers, params={}):
+def _request_hidro_ws(endpoint, headers, params={}):
     """ Make a request to ANA API and returns the json.
 
     :raises requests.exceptions.HTTPError: when the API returns a non-2xx
@@ -106,7 +106,7 @@ def request_token(client_id: str, client_password: str, max_retries=3, retry_del
     endpoint = "/EstacoesTelemetricas/OAUth/v1"
     for attempt in range(max_retries):
         try:
-            data = request_hidro_ws(endpoint, headers, {})
+            data = _request_hidro_ws(endpoint, headers, {})
             token           = data.get("items", {}).get("tokenautenticacao")
             expires_RFC2822 = data.get("items", {}).get("validade")
             expires_ISOND   = datetime.strptime(expires_RFC2822, "%a %b %d %H:%M:%S GMT-03:00 %Y")
@@ -129,18 +129,18 @@ def request_job_data(job_name: str, token: str, params: dict,
     fall back to the API.
 
     When ``save_json`` is true, payloads fetched from the API are also written
-    under ``json_dir`` following :func:`json_file_path`.
+    under ``json_dir`` following :func:`_json_file_path`.
 
     :returns: ``(True, items)`` on success, ``(False, [])`` on a request
         failure.
 
     :raises requests.exceptions.HTTPError: when the API returns a non-2xx
-        status, propagated from :func:`request_hidro_ws`.
+        status, propagated from :func:`_request_hidro_ws`.
     """
 
     if read_json:
         try:
-            return (True, load_response(job_name, params, json_dir))
+            return (True, _load_response(job_name, params, json_dir))
         except FileNotFoundError:
             logger.verbose(f"[REQUEST_DATA]: (load): {job_name}: not found, requesting from API")
         except Exception as e:
@@ -151,7 +151,7 @@ def request_job_data(job_name: str, token: str, params: dict,
         "Authorization": f"Bearer {token}"
     }
     endpoint = _DATA_ENDPOINTS_MAP[job_name]
-    response = request_hidro_ws(endpoint, headers, params)
+    response = _request_hidro_ws(endpoint, headers, params)
     try:
         items = response.get("items", {})
     except Exception as e:
@@ -160,14 +160,14 @@ def request_job_data(job_name: str, token: str, params: dict,
 
     if save_json:
         try:
-            save_response(job_name, params, items, json_dir)
+            _save_response(job_name, params, items, json_dir)
         except Exception as e:
             logger.warning(f"[REQUEST_DATA]: (save): {job_name}: {e}")
 
     return (True, items)
 
 
-def json_file_path(job_name: str, params: dict, json_dir: str) -> str:
+def _json_file_path(job_name: str, params: dict, json_dir: str) -> str:
     """ Return the file path where a job payload is saved under ``json_dir``.
 
     The layout mirrors the repository's ``json/`` directory:
@@ -191,20 +191,20 @@ def json_file_path(job_name: str, params: dict, json_dir: str) -> str:
     )
 
 
-def load_response(job_name: str, params: dict, json_dir: str):
+def _load_response(job_name: str, params: dict, json_dir: str):
     """ Load a job payload saved under ``json_dir`` and return it. """
 
-    path = json_file_path(job_name, params, json_dir)
+    path = _json_file_path(job_name, params, json_dir)
     with open(path) as f:
         items = json.load(f)
     logger.verbose(f"[REQUEST_DATA]: Loaded {path}")
     return items
 
 
-def save_response(job_name: str, params: dict, items, json_dir: str) -> str:
+def _save_response(job_name: str, params: dict, items, json_dir: str) -> str:
     """ Save a job payload under ``json_dir`` and return the written path."""
 
-    path      = json_file_path(job_name, params, json_dir)
+    path      = _json_file_path(job_name, params, json_dir)
     directory = os.path.dirname(path)
     if directory:
         os.makedirs(directory, exist_ok=True)

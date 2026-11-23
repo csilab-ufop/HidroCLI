@@ -30,8 +30,13 @@ from unittest.mock import patch, Mock
 import requests
 import json
 
+from datetime import datetime
+
 from hidrocli.config import setup_logger
-from hidrocli.webservices import *
+from hidrocli.webservices import (
+    request_job_data, request_token,
+    _request_hidro_ws, _json_file_path, _load_response,
+)
 
 setup_logger()
 
@@ -44,7 +49,7 @@ def test_request_hidro_ws_success(mock_get):
     mock_response.json.return_value = {"data": "test"}
     mock_get.return_value           = mock_response
 
-    result = request_hidro_ws("/endpoint", {"Authorization": "Bearer token"})
+    result = _request_hidro_ws("/endpoint", {"Authorization": "Bearer token"})
 
     assert result == {"data": "test"}
     mock_get.assert_called_once_with(
@@ -67,7 +72,7 @@ def test_request_hidro_ws_non_ok_raises(mock_get, status):
     mock_get.return_value           = mock_response
 
     with pytest.raises(requests.exceptions.HTTPError) as excinfo:
-        request_hidro_ws("/endpoint", {})
+        _request_hidro_ws("/endpoint", {})
 
     assert excinfo.value.response.status_code == status
 
@@ -79,7 +84,7 @@ def test_request_hidro_ws_timeout_raises(mock_get):
     mock_get.side_effect = requests.exceptions.Timeout
 
     with pytest.raises(requests.exceptions.Timeout):
-        request_hidro_ws("/endpoint", {})
+        _request_hidro_ws("/endpoint", {})
 
 
 @patch('hidrocli.webservices.requests.get')
@@ -91,7 +96,7 @@ def test_request_hidro_ws_connection_error_raises(mock_get):
     )
 
     with pytest.raises(requests.exceptions.ConnectionError):
-        request_hidro_ws("/endpoint", {})
+        _request_hidro_ws("/endpoint", {})
 
 
 @patch('hidrocli.webservices.requests.get')
@@ -103,12 +108,12 @@ def test_request_hidro_ws_json_exception(mock_get):
     mock_response.json.side_effect = ValueError("Invalid JSON")
     mock_get.return_value          = mock_response
 
-    result = request_hidro_ws("/endpoint", {})
+    result = _request_hidro_ws("/endpoint", {})
 
     assert result is None
 
 
-@patch('hidrocli.webservices.request_hidro_ws')
+@patch('hidrocli.webservices._request_hidro_ws')
 def test_request_token_success(mock_request):
     """Test successful token retrieval."""
 
@@ -136,7 +141,7 @@ def test_request_token_success(mock_request):
     )
 
 
-@patch('hidrocli.webservices.request_hidro_ws')
+@patch('hidrocli.webservices._request_hidro_ws')
 @patch('hidrocli.webservices.time.sleep')
 def test_request_token_retry_then_success(mock_sleep, mock_request):
     """Test retry logic when first attempt fails."""
@@ -157,7 +162,7 @@ def test_request_token_retry_then_success(mock_sleep, mock_request):
     mock_sleep.assert_called_once_with(2)
 
 
-@patch('hidrocli.webservices.request_hidro_ws')
+@patch('hidrocli.webservices._request_hidro_ws')
 @patch('hidrocli.webservices.time.sleep')
 def test_request_token_all_retries_fail(mock_sleep, mock_request):
     """Test that exception is raised after all retries fail."""
@@ -183,14 +188,14 @@ SERIES_PARAMS = {
 
 def test_json_file_path_base_jobs():
     for job in BASE_JOBS:
-        assert json_file_path(job, {}, "json") == os.path.join(
+        assert _json_file_path(job, {}, "json") == os.path.join(
             "json", f"{job}.json"
         )
 
 
 def test_json_file_path_estacao():
     params = {"Unidade Federativa": "MG"}
-    assert json_file_path("Estacao", params, "json") == os.path.join(
+    assert _json_file_path("Estacao", params, "json") == os.path.join(
         "json", "Estacao", "Estacao_MG.json"
     )
 
@@ -200,17 +205,17 @@ def test_json_file_path_series_jobs():
         "json", "{job}", "station_12345_1927-05-01_1928-05-01.json"
     )
     for job in SERIES_JOBS:
-        assert json_file_path(job, SERIES_PARAMS, "json") == expected.format(job=job)
+        assert _json_file_path(job, SERIES_PARAMS, "json") == expected.format(job=job)
 
 
 def test_load_response_returns_saved_payload(tmp_path):
     items = [{"codigobacia": "1", "Nome_Bacia": "RIO AMAZONAS"}]
     (tmp_path / "Bacia.json").write_text(json.dumps(items))
 
-    assert load_response("Bacia", {}, str(tmp_path)) == items
+    assert _load_response("Bacia", {}, str(tmp_path)) == items
 
 
-@patch('hidrocli.webservices.request_hidro_ws')
+@patch('hidrocli.webservices._request_hidro_ws')
 def test_request_job_data_unauthorized_raises(mock_request):
     """Test that a 401 is propagated so the caller can skip the job."""
 
@@ -222,7 +227,7 @@ def test_request_job_data_unauthorized_raises(mock_request):
         request_job_data("Bacia", "token", {})
 
 
-@patch('hidrocli.webservices.request_hidro_ws')
+@patch('hidrocli.webservices._request_hidro_ws')
 def test_request_job_data_reads_json_without_request(mock_request, tmp_path):
     items = [{"codigobacia": "1"}]
     (tmp_path / "Bacia.json").write_text(json.dumps(items))
@@ -236,7 +241,7 @@ def test_request_job_data_reads_json_without_request(mock_request, tmp_path):
     mock_request.assert_not_called()
 
 
-@patch('hidrocli.webservices.save_response')
+@patch('hidrocli.webservices._save_response')
 def test_request_job_data_does_not_save_loaded_payload(mock_save, tmp_path):
     items = [{"codigobacia": "1"}]
     (tmp_path / "Bacia.json").write_text(json.dumps(items))
@@ -249,7 +254,7 @@ def test_request_job_data_does_not_save_loaded_payload(mock_save, tmp_path):
     mock_save.assert_not_called()
 
 
-@patch('hidrocli.webservices.request_hidro_ws')
+@patch('hidrocli.webservices._request_hidro_ws')
 def test_request_job_data_read_json_falls_back_when_missing(mock_request,
                                                             tmp_path):
     items = [{"codigobacia": "1"}]
@@ -264,7 +269,7 @@ def test_request_job_data_read_json_falls_back_when_missing(mock_request,
     mock_request.assert_called_once()
 
 
-@patch('hidrocli.webservices.request_hidro_ws')
+@patch('hidrocli.webservices._request_hidro_ws')
 def test_request_job_data_read_json_falls_back_when_corrupt(mock_request,
                                                             tmp_path, caplog):
     (tmp_path / "Bacia.json").write_text("{not json")
@@ -281,7 +286,7 @@ def test_request_job_data_read_json_falls_back_when_corrupt(mock_request,
     assert "requesting from API" in caplog.text
 
 
-@patch('hidrocli.webservices.request_hidro_ws')
+@patch('hidrocli.webservices._request_hidro_ws')
 def test_request_job_data_saves_payload_after_read_fallback(mock_request,
                                                             tmp_path):
     items = [{"codigobacia": "1"}]
@@ -295,7 +300,7 @@ def test_request_job_data_saves_payload_after_read_fallback(mock_request,
     assert json.loads((tmp_path / "Bacia.json").read_text()) == items
 
 
-@patch('hidrocli.webservices.request_hidro_ws')
+@patch('hidrocli.webservices._request_hidro_ws')
 def test_request_job_data_saves_json(mock_request, tmp_path):
     items = [{"codigobacia": "1", "Nome_Bacia": "RIO AMAZONAS"}]
     mock_request.return_value = {"items": items}
@@ -311,7 +316,7 @@ def test_request_job_data_saves_json(mock_request, tmp_path):
     assert path.read_text().startswith("[\n  {")
 
 
-@patch('hidrocli.webservices.request_hidro_ws')
+@patch('hidrocli.webservices._request_hidro_ws')
 def test_request_job_data_creates_series_directory(mock_request, tmp_path):
     mock_request.return_value = {"items": [{"codigoestacao": "12345"}]}
 
@@ -324,7 +329,7 @@ def test_request_job_data_creates_series_directory(mock_request, tmp_path):
     assert json.loads(path.read_text()) == [{"codigoestacao": "12345"}]
 
 
-@patch('hidrocli.webservices.request_hidro_ws')
+@patch('hidrocli.webservices._request_hidro_ws')
 def test_request_job_data_saves_empty_items(mock_request, tmp_path):
     mock_request.return_value = {"items": []}
 
@@ -337,7 +342,7 @@ def test_request_job_data_saves_empty_items(mock_request, tmp_path):
     assert (tmp_path / "Bacia.json").read_text().strip() == "[]"
 
 
-@patch('hidrocli.webservices.request_hidro_ws')
+@patch('hidrocli.webservices._request_hidro_ws')
 def test_request_job_data_does_not_save_when_disabled(mock_request, tmp_path,
                                                       monkeypatch):
     monkeypatch.chdir(tmp_path)
@@ -350,8 +355,8 @@ def test_request_job_data_does_not_save_when_disabled(mock_request, tmp_path,
     assert list(tmp_path.iterdir()) == []
 
 
-@patch('hidrocli.webservices.save_response', side_effect=OSError("disk full"))
-@patch('hidrocli.webservices.request_hidro_ws')
+@patch('hidrocli.webservices._save_response', side_effect=OSError("disk full"))
+@patch('hidrocli.webservices._request_hidro_ws')
 def test_request_job_data_save_failure_keeps_data(mock_request,
                                                   mock_save_response):
     items = [{"codigobacia": "1"}]
