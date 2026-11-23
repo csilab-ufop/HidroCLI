@@ -31,11 +31,11 @@ import hidrocli.__main__ as entry
 @patch('hidrocli.jobs.runner.run')
 @patch('hidrocli.config.setup_database')
 @patch('hidrocli.config.setup_logger')
-@patch('hidrocli.config.setup_arguments')
-def test_cli_runs_jobs(mock_arguments, mock_logger, mock_database, mock_run):
+@patch('hidrocli.config.parse_config')
+def test_cli_runs_jobs(mock_config, mock_logger, mock_database, mock_run):
     entry.cli()
 
-    mock_arguments.assert_called_once()
+    mock_config.assert_called_once()
     mock_logger.assert_called_once()
     mock_database.assert_called_once()
     mock_run.assert_called_once()

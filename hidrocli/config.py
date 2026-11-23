@@ -29,9 +29,35 @@ Provides general config to HidroCLI application.
 import logging
 import re
 
-LOG_LEVEL    = None
-HIDRO_PATH   = None
-CLIENT_PATH  = None
+from datetime import datetime
+from typing import NamedTuple, Optional
+
+
+class Config(NamedTuple):
+    """Frozen run configuration built once from command-line arguments.
+
+    Holds the user-facing settings that would otherwise live as mutable module
+    globals. ``JOB_CHUNK_SIZE`` and ``SERVER_ERROR_BACKOFF`` stay plain module
+    constants in ``hidrocli.jobs.runner``: they are tuning knobs, not CLI flags.
+    """
+
+    LOG_LEVEL:   str  = "INFO"
+    HIDRO_PATH:  str  = "db/hidro.db"
+    CLIENT_PATH: str  = "db/client.db"
+    MAX_WORKERS: int  = 10
+    BATCH_SIZE:  int  = 1000
+    SKIP_SERIES_JOBS: bool = False
+    SKIP_FOR:  tuple = ()
+    RUN_FOR:   tuple = ()
+    STATIONS:  tuple = ()
+    FILTER:    str   = "DATA_ULTIMA_ATUALIZACAO"
+    INITIAL_DATE: Optional[datetime] = None
+    FINAL_DATE:   Optional[datetime] = None
+    SAVE_JSON:    bool = False
+    READ_JSON:    bool = False
+    JSON_DIR:     str  = "json"
+    TRACE_RECORDS: bool = False
+
 
 _DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 
@@ -40,7 +66,6 @@ def _parse_date(value):
     """Parse a command-line date in the ``yyyy-mm-dd`` format."""
 
     import argparse
-    from datetime import datetime
 
     try:
         if not _DATE_RE.fullmatch(value):
@@ -52,10 +77,10 @@ def _parse_date(value):
         ) from None
 
 
-def setup_arguments():
-    """ Setup command line arguments. """
+def parse_config(argv=None):
+    """Parse command-line arguments into a frozen :class:`Config`."""
 
-    import argparse;
+    import argparse
     parser = argparse.ArgumentParser(prog='hidrocli')
 
     parser.add_argument('--hidro', type=str, default='db/hidro.db',
@@ -115,35 +140,35 @@ def setup_arguments():
     parser.add_argument('--trace-records', action='store_true', default=False,
                         help='Save JobRecords provenance for written data rows')
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if (args.initial_date is not None and args.final_date is not None and
             args.initial_date > args.final_date):
         parser.error('--initial-date must be on or before --final-date')
 
-    global LOG_LEVEL, HIDRO_PATH, CLIENT_PATH
-    LOG_LEVEL   = args.log_level
-    HIDRO_PATH  = args.hidro
-    CLIENT_PATH = args.client
+    return Config(
+        LOG_LEVEL    = args.log_level,
+        HIDRO_PATH   = args.hidro,
+        CLIENT_PATH  = args.client,
+        MAX_WORKERS  = args.max_workers,
+        BATCH_SIZE   = args.batch_size,
+        SKIP_SERIES_JOBS = args.skip_series_jobs,
+        SKIP_FOR     = tuple(args.skip_for),
+        RUN_FOR      = tuple(args.run_for),
+        STATIONS     = tuple(args.stations),
+        FILTER       = args.filter,
+        INITIAL_DATE = args.initial_date,
+        FINAL_DATE   = args.final_date,
+        SAVE_JSON    = args.save_json,
+        READ_JSON    = args.read_json,
+        JSON_DIR     = args.json_dir,
+        TRACE_RECORDS = args.trace_records,
+    )
 
-    import hidrocli.jobs.runner as jobs
-    jobs.SKIP_SERIES_JOBS    = args.skip_series_jobs
-    jobs.SKIP_FOR            = args.skip_for
-    jobs.RUN_FOR             = args.run_for
-    jobs.STATIONS            = args.stations
-    jobs.MAX_WORKERS         = args.max_workers
-    jobs.BATCH_SIZE          = args.batch_size
-    jobs.FILTER              = args.filter
-    jobs.INITIAL_DATE        = args.initial_date
-    jobs.FINAL_DATE          = args.final_date
-    jobs.SAVE_JSON           = args.save_json
-    jobs.READ_JSON           = args.read_json
-    jobs.JSON_DIR            = args.json_dir
-    jobs.TRACE_RECORDS       = args.trace_records
 
-
-def setup_logger():
+def setup_logger(config: Config = Config()):
     """ Setup logger object accross application. """
+
     TRACE = 15
     setattr(logging.Logger, 'trace', _make_logger(TRACE))
     logging.addLevelName(TRACE, 'TRACE')
@@ -152,7 +177,7 @@ def setup_logger():
     logging.addLevelName(VERBOSE, 'VERBOSE')
     handler = logging.StreamHandler()
     handler.setFormatter(_LogFormatter())
-    level = logging.CRITICAL + 1 if LOG_LEVEL == 'NONE' else LOG_LEVEL
+    level = logging.CRITICAL + 1 if config.LOG_LEVEL == 'NONE' else config.LOG_LEVEL
     logging.basicConfig(
         level=level,
         handlers=[handler]
@@ -194,12 +219,12 @@ def _make_logger(level):
     return logger
 
 
-def setup_database():
+def setup_database(config: Config):
     """ Setup Hidro and Client Database. """
 
     import hidrocli.database        as db
     import hidrocli.database.client as client
-    db.init_db(HIDRO_PATH, CLIENT_PATH)
+    db.init_db(config.HIDRO_PATH, config.CLIENT_PATH)
     if not client.check_credentials():
         user_id = input("Enter API username: ")
         import getpass;

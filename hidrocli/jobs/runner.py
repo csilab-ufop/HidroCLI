@@ -57,49 +57,15 @@ from hidrocli.database.hidro import (
 
 from requests.exceptions import HTTPError, RequestException
 
+from hidrocli.config import Config
+
 from hidrocli.webservices import request_job_data, request_token
 
 from hidrocli.jobs import DedupMode, expected_keys, get_date_key, get_dedup
 
 
-MAX_WORKERS      = None
-"""Maximum number of worker threads used for parallel requests."""
-
-BATCH_SIZE       = None
-"""Number of accumulated records or jobs that triggers a database write."""
-
-SKIP_SERIES_JOBS = False
-"""Skip every series job when true."""
-
-SKIP_FOR         = []
-"""Series jobs to skip, by name."""
-
-RUN_FOR          = []
-"""Series jobs to run; empty means every job not skipped."""
-
-STATIONS         = []
-"""Station codes used to restrict series jobs; empty means every station."""
-
-FILTER           = "DATA_ULTIMA_ATUALIZACAO"
-"""Date field used to filter ANA series requests."""
-
-INITIAL_DATE     = None
-"""Optional initial date override for series jobs."""
-
-FINAL_DATE       = None
-"""Optional final date override for series jobs."""
-
-SAVE_JSON        = False
-"""Save raw API responses as JSON files."""
-
-READ_JSON        = False
-"""Reuse cached JSON responses instead of requesting the API."""
-
-JSON_DIR         = "json"
-"""Directory used for cached JSON payloads."""
-
-TRACE_RECORDS    = False
-"""Save JobRecords provenance for each written data row."""
+CONFIG: Config = Config()
+"""Frozen run configuration, set once by :func:`run` before jobs execute."""
 
 
 JOB_CHUNK_SIZE = 5000
@@ -127,7 +93,7 @@ class QueueData(NamedTuple):
 def _batch_size() -> int:
     """Return the configured write/job chunk size, with a safe default."""
 
-    return max(1, BATCH_SIZE or 1000)
+    return max(1, CONFIG.BATCH_SIZE)
 
 
 def _chunked(items, size: int):
@@ -239,13 +205,13 @@ def check_series_job(job_config: JobConfig) -> None:
     Create missing station jobs and start pending jobs requisition.
     """
 
-    selected    = set(STATIONS)
+    selected    = set(CONFIG.STATIONS)
     period_data = []
     for data in get_period(job_config).all():
         if selected and data[0] not in selected:
             continue
-        start = INITIAL_DATE if INITIAL_DATE is not None else data[1]
-        end   = FINAL_DATE   if FINAL_DATE   is not None else data[2]
+        start = CONFIG.INITIAL_DATE if CONFIG.INITIAL_DATE is not None else data[1]
+        end   = CONFIG.FINAL_DATE   if CONFIG.FINAL_DATE   is not None else data[2]
         period_data.append((data[0], _as_datetime(start), _as_datetime(end)))
 
     if selected:
@@ -256,19 +222,19 @@ def check_series_job(job_config: JobConfig) -> None:
                 f"in {job_config}."
             )
 
-    existing = get_station_ids(job_config, STATIONS)
+    existing = get_station_ids(job_config, CONFIG.STATIONS)
     missing  = [data for data in period_data if data[0] not in existing]
     if missing:
         logger.info(f"Creating jobs from {len(missing)} stations for {job_config}")
         create_series_jobs(missing, job_config)
 
-    if INITIAL_DATE is not None or FINAL_DATE is not None:
+    if CONFIG.INITIAL_DATE is not None or CONFIG.FINAL_DATE is not None:
         update_series_job_windows(
             job_config,
             [data for data in period_data if data[0] in existing],
         )
 
-    if FINAL_DATE is None:
+    if CONFIG.FINAL_DATE is None:
         update_series_job(job_config)
     trigger_series_jobs(job_config)
 
@@ -278,9 +244,9 @@ def trigger_series_jobs(job_config: JobConfig) -> None:
 
     status = [JobConfig.Status.FAILED.value, JobConfig.Status.PENDING.value]
     filters = create_job_filters(job_config, status, last_check=False,
-                                 stations=STATIONS, max_retries=True,
-                                 initial_date=INITIAL_DATE,
-                                 final_date=FINAL_DATE)
+                                 stations=CONFIG.STATIONS, max_retries=True,
+                                 initial_date=CONFIG.INITIAL_DATE,
+                                 final_date=CONFIG.FINAL_DATE)
     count = count_job(job_config, filters)
     if count:
         logger.info(f"Initiating {count} jobs for {job_config}")
@@ -297,7 +263,7 @@ def create_series_jobs(stations_data: List, job_config: JobConfig) -> None:
     """
     start      = time.time()
     chunk_size = max(_batch_size(), JOB_CHUNK_SIZE)
-    workers    = max(1, MAX_WORKERS or 1)
+    workers    = max(1, CONFIG.MAX_WORKERS)
     batch      = []
     created    = 0
 
@@ -461,7 +427,7 @@ def update_series_job_windows(job_config: JobConfig, stations_data) -> None:
 
 
 def update_series_job(job_config: JobConfig) -> None:
-    selected    = set(STATIONS)
+    selected    = set(CONFIG.STATIONS)
     station_ids = [
         code for code in
         get_period(job_config, only_code=True, with_null_end_date=True).scalars().all()
@@ -490,7 +456,7 @@ def trigger_job(job_config: JobConfig, filters) -> None:
     """
 
     batch_size = _batch_size()
-    workers    = max(1, MAX_WORKERS or 1)
+    workers    = max(1, CONFIG.MAX_WORKERS)
     write_queue.maxsize = batch_size
 
     writer = Thread(target=db_writer, daemon=True)
@@ -624,10 +590,10 @@ def handle_job_request(job: HidroJob, job_config: JobConfig) -> None:
         with token_lock:
             token = get_token()
         success, items = request_job_data(
-            job_config, token, job.to_params(FILTER),
-            save_json = SAVE_JSON,
-            json_dir  = JSON_DIR,
-            read_json = READ_JSON,
+            job_config, token, job.to_params(CONFIG.FILTER),
+            save_json = CONFIG.SAVE_JSON,
+            json_dir  = CONFIG.JSON_DIR,
+            read_json = CONFIG.READ_JSON,
         )
     except HTTPError as e:
         if _handle_http_error(job, job_config, e):
@@ -683,8 +649,8 @@ def db_writer() -> None:
                 if batch_start_time is None:
                     batch_start_time = time.time()
 
-            if (len(batch_buffer["data"]) >= BATCH_SIZE or
-                len(batch_buffer["jobs"]) >= BATCH_SIZE or stop_signal):
+            if (len(batch_buffer["data"]) >= CONFIG.BATCH_SIZE or
+                len(batch_buffer["jobs"]) >= CONFIG.BATCH_SIZE or stop_signal):
                 if batch_start_time is not None:
                     batch_elapsed = time.time() - batch_start_time
                 total_data     += len(batch_buffer["data"])
@@ -730,10 +696,10 @@ def _record_provenance(job_config, data_table, items, data_ids=None):
 
     Items written by the API pipeline carry a private ``_JobID`` tag. The
     helper is a no-op for direct calls without that tag, such as the
-    round-trip tests, and for runs where ``TRACE_RECORDS`` is disabled.
+    round-trip tests, and for runs where ``CONFIG.TRACE_RECORDS`` is disabled.
     """
 
-    if not TRACE_RECORDS or not items:
+    if not CONFIG.TRACE_RECORDS or not items:
         return
 
     if data_ids is None:
@@ -955,13 +921,18 @@ def convert_json_items(job_config, items):
     return items
 
 
-def run():
+def run(config: Config):
+    """Run every base and series job using ``config``."""
+
+    global CONFIG
+    CONFIG = config
+
     for job in JobConfig.Base:
         logger.info(f"====================================")
         check_base_job(job)
         logger.info(f"====================================\n")
 
-    if SKIP_SERIES_JOBS:
+    if CONFIG.SKIP_SERIES_JOBS:
         logger.info(f"====================================")
         logger.info(f"Skiping series jobs.\n")
         logger.info(f"====================================")
@@ -969,12 +940,12 @@ def run():
 
     for job in JobConfig.Series:
         logger.info(f"====================================")
-        if job in SKIP_FOR:
+        if job in CONFIG.SKIP_FOR:
             logger.info(f"Skiping job for {job}.")
             logger.info(f"====================================\n")
             continue
-        if len(RUN_FOR) > 0:
-            if job not in RUN_FOR:
+        if len(CONFIG.RUN_FOR) > 0:
+            if job not in CONFIG.RUN_FOR:
                 logger.info(f"Skiping job for {job}.")
                 logger.info(f"====================================\n")
                 continue

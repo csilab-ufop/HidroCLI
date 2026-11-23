@@ -44,6 +44,14 @@ from hidrocli.models.hidro import (
 setup_logger()
 
 
+def _set_config(monkeypatch, **kwargs):
+    """Replace the runner's frozen CONFIG with one field updated."""
+    monkeypatch.setattr(
+        hidrocli.jobs.runner, "CONFIG",
+        hidrocli.jobs.runner.CONFIG._replace(**kwargs),
+    )
+
+
 @pytest.fixture
 def hidro_db(tmp_path):
     connection = _setup_db(str(tmp_path / "hidro.db"), DatabaseType.HIDRO)
@@ -64,7 +72,7 @@ def client_db(tmp_path):
 
 @pytest.fixture
 def trace_records(monkeypatch):
-    monkeypatch.setattr(hidrocli.jobs.runner, "TRACE_RECORDS", True)
+    _set_config(monkeypatch, TRACE_RECORDS=True)
 
 
 def test_upsert_job_records_updates_latest_job(client_db):
@@ -121,7 +129,7 @@ def test_write_data_records_base_provenance(hidro_db, client_db, trace_records):
 
 def test_write_data_skips_provenance_when_trace_disabled(
         hidro_db, client_db, monkeypatch):
-    monkeypatch.setattr(hidrocli.jobs.runner, "TRACE_RECORDS", False)
+    _set_config(monkeypatch, TRACE_RECORDS=False)
     item = {
         "codigobacia": 1,
         "Nome_Bacia":  "Test basin",

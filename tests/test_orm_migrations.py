@@ -309,7 +309,7 @@ def test_main_reports_migration_error_without_traceback():
     import hidrocli.__main__ as entry
 
     with (
-        patch("hidrocli.config.setup_arguments"),
+        patch("hidrocli.config.parse_config"),
         patch("hidrocli.config.setup_logger"),
         patch(
             "hidrocli.config.setup_database",

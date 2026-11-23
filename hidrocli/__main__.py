@@ -28,16 +28,16 @@ def cli() -> None:
     import hidrocli.config as config
     from hidro_orm.runner import MigrationError
 
-    config.setup_arguments()
-    config.setup_logger()
+    parsed = config.parse_config()
+    config.setup_logger(parsed)
 
     try:
-        config.setup_database()
+        config.setup_database(parsed)
     except MigrationError as exc:
         raise SystemExit(f"[ERROR]: {exc}") from None
 
     import hidrocli.jobs.runner
-    hidrocli.jobs.runner.run()
+    hidrocli.jobs.runner.run(parsed)
 
 if __name__ == "__main__":
     cli()

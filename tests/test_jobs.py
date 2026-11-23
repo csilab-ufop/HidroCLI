@@ -33,6 +33,14 @@ from hidrocli.config import setup_logger
 setup_logger()
 
 
+def _set_config(monkeypatch, **kwargs):
+    """Replace the runner's frozen CONFIG with one field updated."""
+    monkeypatch.setattr(
+        hidrocli.jobs.runner, "CONFIG",
+        hidrocli.jobs.runner.CONFIG._replace(**kwargs),
+    )
+
+
 def _http_error(status, body=None):
     """Build an HTTPError whose response carries ``status`` and optional body."""
     response = MagicMock(status_code=status)
@@ -215,8 +223,7 @@ def test_filter_repeated_series_items(job_config):
 
 @patch('hidrocli.jobs.runner.process_period')
 def test_create_series_jobs_inserts_in_chunks(mock_period, monkeypatch):
-    monkeypatch.setattr(hidrocli.jobs.runner, "MAX_WORKERS", 2)
-    monkeypatch.setattr(hidrocli.jobs.runner, "BATCH_SIZE", 3)
+    _set_config(monkeypatch, MAX_WORKERS=2, BATCH_SIZE=3)
     monkeypatch.setattr(hidrocli.jobs.runner, "JOB_CHUNK_SIZE", 3)
 
     def fake_period(station, start, end, job_config):
@@ -262,8 +269,7 @@ def test_trigger_job_streams_jobs(mock_iter, mock_handle, mock_writer,
     mock_iter.return_value = iter([
         MagicMock(ID=index) for index in range(20)
     ])
-    monkeypatch.setattr(hidrocli.jobs.runner, "MAX_WORKERS", 2)
-    monkeypatch.setattr(hidrocli.jobs.runner, "BATCH_SIZE", 5)
+    _set_config(monkeypatch, MAX_WORKERS=2, BATCH_SIZE=5)
 
     hidrocli.jobs.runner.trigger_job(
         hidrocli.jobs.runner.JobConfig.Series.RAIN, ["filter"]
@@ -285,9 +291,7 @@ def test_trigger_job_streams_jobs(mock_iter, mock_handle, mock_writer,
 def test_handle_job_request_passes_json_flags(
         mock_token, mock_request, mock_convert, mock_queue,
         monkeypatch, save_json, read_json):
-    monkeypatch.setattr(hidrocli.jobs.runner, "SAVE_JSON", save_json)
-    monkeypatch.setattr(hidrocli.jobs.runner, "READ_JSON", read_json)
-    monkeypatch.setattr(hidrocli.jobs.runner, "JSON_DIR", "custom/json")
+    _set_config(monkeypatch, SAVE_JSON=save_json, READ_JSON=read_json, JSON_DIR="custom/json")
     mock_request.return_value = (True, [])
     job = MagicMock()
     job.to_params.return_value = {}
@@ -570,7 +574,7 @@ def test_validate_cross_section_allows_missing_ana_id():
 def test_update_series_job_uses_bulk_reset(mock_period, mock_reset,
                                            monkeypatch):
     mock_period.return_value.scalars.return_value.all.return_value = [1, 2, 3]
-    monkeypatch.setattr(hidrocli.jobs.runner, "BATCH_SIZE", 500)
+    _set_config(monkeypatch, BATCH_SIZE=500)
 
     hidrocli.jobs.runner.update_series_job(
         hidrocli.jobs.runner.JobConfig.Series.RAIN
@@ -588,7 +592,7 @@ def test_update_series_job_uses_bulk_reset(mock_period, mock_reset,
 def test_update_series_job_scopes_selected_stations(mock_period, mock_reset,
                                                     monkeypatch):
     mock_period.return_value.scalars.return_value.all.return_value = [1, 2, 3]
-    monkeypatch.setattr(hidrocli.jobs.runner, "STATIONS", [2, 4])
+    _set_config(monkeypatch, STATIONS=[2, 4])
 
     hidrocli.jobs.runner.update_series_job(
         hidrocli.jobs.runner.JobConfig.Series.RAIN
@@ -616,7 +620,7 @@ def test_check_series_job_creates_only_missing_stations(
         (3, "start", "end"),
     ]
     mock_station_ids.return_value = {1, 3}
-    monkeypatch.setattr(hidrocli.jobs.runner, "STATIONS", stations)
+    _set_config(monkeypatch, STATIONS=stations)
 
     hidrocli.jobs.runner.check_series_job(
         hidrocli.jobs.runner.JobConfig.Series.RAIN
@@ -640,7 +644,7 @@ def test_check_series_job_warns_for_unknown_station(
         mock_period, mock_station_ids, mock_create, mock_count,
         mock_update, monkeypatch, caplog):
     mock_period.return_value.all.return_value = [(1, "start", "end")]
-    monkeypatch.setattr(hidrocli.jobs.runner, "STATIONS", [1, 99])
+    _set_config(monkeypatch, STATIONS=[1, 99])
 
     hidrocli.jobs.runner.check_series_job(
         hidrocli.jobs.runner.JobConfig.Series.RAIN
@@ -727,7 +731,7 @@ def test_update_series_job_windows_keeps_exact_matches(
         mock_iter, mock_update, mock_insert, monkeypatch):
     start, end = datetime(2020, 1, 1), datetime(2021, 1, 1)
     mock_iter.return_value = [_series_job(1, 10, start, end)]
-    monkeypatch.setattr(hidrocli.jobs.runner, "BATCH_SIZE", 100)
+    _set_config(monkeypatch, BATCH_SIZE=100)
 
     hidrocli.jobs.runner.update_series_job_windows(
         hidrocli.jobs.runner.JobConfig.Series.RAIN, [(10, start, end)]
@@ -747,7 +751,7 @@ def test_update_series_job_windows_updates_overlapping_job(
         status=5, retries=3,
     )
     mock_iter.return_value = [job]
-    monkeypatch.setattr(hidrocli.jobs.runner, "BATCH_SIZE", 100)
+    _set_config(monkeypatch, BATCH_SIZE=100)
     start, end = datetime(2020, 6, 1), datetime(2021, 6, 1)
 
     hidrocli.jobs.runner.update_series_job_windows(
@@ -771,7 +775,7 @@ def test_update_series_job_windows_updates_overlapping_job(
 @patch('hidrocli.jobs.runner.iter_jobs', return_value=[])
 def test_update_series_job_windows_inserts_missing_year(
         mock_iter, mock_update, mock_insert, monkeypatch):
-    monkeypatch.setattr(hidrocli.jobs.runner, "BATCH_SIZE", 100)
+    _set_config(monkeypatch, BATCH_SIZE=100)
     start, end = datetime(2020, 1, 1), datetime(2021, 1, 1)
 
     hidrocli.jobs.runner.update_series_job_windows(
@@ -800,12 +804,10 @@ def test_check_series_job_applies_date_overrides(
         (1, datetime(2000, 1, 1), datetime(2010, 1, 1)),
         (2, datetime(2001, 1, 1), datetime(2011, 1, 1)),
     ]
-    monkeypatch.setattr(hidrocli.jobs.runner, "STATIONS", [])
-    monkeypatch.setattr(
-        hidrocli.jobs.runner, "INITIAL_DATE", datetime(2005, 1, 1)
-    )
-    monkeypatch.setattr(
-        hidrocli.jobs.runner, "FINAL_DATE", datetime(2008, 1, 1)
+    _set_config(
+        monkeypatch,
+        STATIONS=[], INITIAL_DATE=datetime(2005, 1, 1),
+        FINAL_DATE=datetime(2008, 1, 1),
     )
 
     hidrocli.jobs.runner.check_series_job(
@@ -835,11 +837,10 @@ def test_check_series_job_keeps_stale_reset_without_final_date(
     mock_period.return_value.all.return_value = [
         (1, datetime(2000, 1, 1), datetime(2010, 1, 1)),
     ]
-    monkeypatch.setattr(hidrocli.jobs.runner, "STATIONS", [])
-    monkeypatch.setattr(
-        hidrocli.jobs.runner, "INITIAL_DATE", datetime(2005, 1, 1)
+    _set_config(
+        monkeypatch,
+        STATIONS=[], INITIAL_DATE=datetime(2005, 1, 1), FINAL_DATE=None,
     )
-    monkeypatch.setattr(hidrocli.jobs.runner, "FINAL_DATE", None)
 
     hidrocli.jobs.runner.check_series_job(
         hidrocli.jobs.runner.JobConfig.Series.RAIN
@@ -857,8 +858,7 @@ def test_trigger_series_jobs_passes_date_bounds(
         mock_count, mock_trigger, mock_filters, monkeypatch):
     initial = datetime(2020, 1, 1)
     final   = datetime(2021, 1, 1)
-    monkeypatch.setattr(hidrocli.jobs.runner, "INITIAL_DATE", initial)
-    monkeypatch.setattr(hidrocli.jobs.runner, "FINAL_DATE", final)
+    _set_config(monkeypatch, INITIAL_DATE=initial, FINAL_DATE=final)
 
     hidrocli.jobs.runner.trigger_series_jobs(
         hidrocli.jobs.runner.JobConfig.Series.RAIN
