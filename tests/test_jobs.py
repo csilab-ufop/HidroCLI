@@ -25,6 +25,9 @@
 import pytest
 from unittest.mock import patch, MagicMock
 
+import io
+import time
+
 from datetime import datetime, timedelta
 
 import hidrocli.jobs.runner
@@ -282,6 +285,34 @@ def test_trigger_job_streams_jobs(mock_iter, mock_handle, mock_writer,
     mock_queue.put.assert_called_once()
 
 
+@patch('hidrocli.jobs.runner.count_job_by_status', return_value=[])
+@patch('hidrocli.jobs.runner.write_queue')
+@patch('hidrocli.jobs.runner.db_writer')
+@patch('hidrocli.jobs.runner._make_progress_bar')
+@patch('hidrocli.jobs.runner._AdaptiveLimiter')
+@patch('hidrocli.jobs.runner.handle_job_request')
+@patch('hidrocli.jobs.runner.iter_jobs')
+def test_trigger_job_caps_limiter_to_total(
+        mock_iter, mock_handle, mock_limiter_cls, mock_bar,
+        mock_writer, mock_queue, mock_count, monkeypatch):
+    mock_iter.return_value = iter([MagicMock(ID=1)])
+    bar = mock_bar.return_value
+    bar.disable = False
+    bar.format_dict = {"n": 0, "total": 1, "elapsed": 0, "rate": None}
+    limiter = mock_limiter_cls.return_value
+    limiter.pause_until = 0.0
+
+    _set_config(monkeypatch, MAX_WORKERS=256, BATCH_SIZE=5, READ_JSON=False)
+
+    hidrocli.jobs.runner.trigger_job(
+        hidrocli.jobs.runner.JobConfig.Series.RAIN, [], 1
+    )
+
+    _, kwargs = mock_limiter_cls.call_args
+    assert kwargs["initial"] == 1
+    assert kwargs["maximum"] == 1
+
+
 def test_adaptive_limiter_grows_and_halves():
     limiter = hidrocli.jobs.runner._AdaptiveLimiter(initial=4, maximum=8)
 
@@ -305,6 +336,53 @@ def test_adaptive_limiter_grows_and_halves():
     for _ in range(hidrocli.jobs.runner.ADAPTIVE_INCREASE_AFTER):
         limiter.success()
     assert limiter.limit == 5
+
+
+def test_throttle_sets_persistent_pause(monkeypatch):
+    monkeypatch.setattr(hidrocli.jobs.runner, "_limiter", None)
+    monkeypatch.setattr(hidrocli.jobs.runner, "_throttle_until", 0.0)
+
+    hidrocli.jobs.runner._throttle()
+
+    assert hidrocli.jobs.runner._throttle_until > time.monotonic()
+
+
+@patch('hidrocli.jobs.runner.time.sleep')
+def test_wait_throttle_sleeps(mock_sleep, monkeypatch):
+    monkeypatch.setattr(
+        hidrocli.jobs.runner, "_throttle_until",
+        time.monotonic() + 10,
+    )
+
+    hidrocli.jobs.runner._wait_throttle()
+
+    mock_sleep.assert_called_once()
+
+
+def test_progress_renders_bar_stats_and_throttle(monkeypatch):
+    stream = io.StringIO()
+    monkeypatch.setattr(hidrocli.jobs.runner, "_interactive", lambda: True)
+    monkeypatch.setattr(hidrocli.jobs.runner.sys, "stderr", stream)
+
+    limiter = hidrocli.jobs.runner._AdaptiveLimiter(initial=4, maximum=8)
+    limiter.limit = 8
+    limiter.errors = 2
+    limiter.pause_until = time.monotonic() + 1.0
+
+    bar = hidrocli.jobs.runner._make_progress_bar(1, "Request", "job")
+    bar.update(1)
+    bar.set_postfix_str(hidrocli.jobs.runner._bar_stats(
+        bar, "Jobs", "job", limiter=limiter, throttle=1.0
+    ), refresh=True)
+    bar.close()
+
+    output = stream.getvalue()
+    assert "Request:" in output
+    assert "Jobs 1/1" in output
+    assert "limiter 8/8" not in output
+    assert "Workers: 8/8" in output
+    assert "errors 2" in output
+    assert "throttle 1.0s" in output
 
 
 @patch('hidrocli.jobs.runner.write_queue')

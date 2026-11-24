@@ -109,6 +109,7 @@ class _AdaptiveLimiter:
         self.limit     = max(1, min(initial, self.maximum))
         self.active    = 0
         self.successes = 0
+        self.errors    = 0
         self.slow_start  = True
         self.pause_until = 0.0
         self.condition = Condition()
@@ -155,13 +156,13 @@ class _AdaptiveLimiter:
         """Halve the limit and pause briefly after a throttle response."""
 
         with self.condition:
+            self.errors += 1
             self.slow_start = False
             self.limit = max(1, self.limit // 2)
             self.successes = 0
             pause = ADAPTIVE_PAUSE * random.uniform(0.5, 1.5)
-            self.pause_until = max(
-                self.pause_until, time.monotonic() + pause
-            )
+            now = time.monotonic()
+            self.pause_until = max(self.pause_until, now + pause)
             self.condition.notify_all()
 
 
@@ -227,25 +228,65 @@ def _interactive() -> bool:
     return os.environ.get("TERM", "") not in ("", "dumb")
 
 
-def _make_progress_bar(total: int, desc: str, unit: str):
-    """Return a tqdm bar, disabled when stderr is not a terminal.
+def _clock(seconds: float) -> str:
+    """Format seconds as ``MM:SS`` (or ``H:MM:SS`` past an hour)."""
 
-    ``unit`` is prefixed with a space so the rate renders as ``12.3 job/s``
-    rather than tqdm's cramped ``12.3job/s``. The remaining-time estimate is
-    dropped so the bar reads ``[elapsed, rate]`` instead of ``[elapsed<eta]``.
-    """
+    seconds = max(0, int(seconds))
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
 
-    return tqdm(
-        total=total,
-        desc=desc,
-        unit=f" {unit}",
-        bar_format=(
-            "{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} "
-            "[{elapsed}, {rate_fmt}{postfix}]"
-        ),
-        disable=not _interactive(),
-        file=sys.stderr,
+
+def _bar_stats(bar, label: str, unit: str, created=None, limiter=None,
+               throttle=None) -> str:
+    """Return the stats shown after a progress bar."""
+
+    data      = bar.format_dict
+    n         = int(data["n"])
+    total     = int(data["total"] or 0)
+    elapsed   = data["elapsed"]
+    rate      = data["rate"] or 0.0
+    remaining = (total - n) / rate if rate else 0.0
+    projected = elapsed + remaining
+
+    fields = [
+        f"{_clock(elapsed)}/{_clock(projected)}",
+        f"{rate:.2f} {unit}/s",
+    ]
+    if created is not None:
+        fields.append(f"jobs created: {created}")
+    if limiter is not None:
+        fields.append(f"Workers: {limiter.limit}/{limiter.maximum}")
+        fields.append(f"errors {limiter.errors}")
+    if throttle is not None:
+        fields.append(f"throttle {throttle:.1f}s")
+    return f"{label} {n}/{total} [" + ", ".join(fields) + "]"
+
+
+class _Bar(tqdm):
+    """tqdm bar that removes the comma tqdm inserts before the postfix."""
+
+    def __str__(self):
+        return super().__str__().replace("|, ", "| ")
+
+
+def _make_progress_bar(total: int, desc: str, unit: str) -> _Bar:
+    """Return a one-line progress bar, disabled without a terminal."""
+
+    return _Bar(
+        total=total, desc=desc, unit=f" {unit}",
+        bar_format="{desc}: {percentage:3.0f}%|{bar}|{postfix}",
+        disable=not _interactive(), file=sys.stderr, leave=True,
     )
+
+
+def _print_job_header(job_config) -> None:
+    """Print the job banner before its bars (terminal output only)."""
+
+    if _interactive():
+        tqdm.write(f"\r\n{job_config}:", file=sys.stderr)
 
 
 def _announce(message: str) -> None:
@@ -281,6 +322,9 @@ _token_cache: Optional[Token] = None
 
 _limiter: Optional[_AdaptiveLimiter] = None
 """Active adaptive concurrency limiter for the current request phase."""
+
+_throttle_until = 0.0
+"""Monotonic time before which no new request should be made after a throttle."""
 
 def get_token() -> Token.Token:
     """Authenticate and return access token.
@@ -418,12 +462,11 @@ def create_series_jobs(stations_data: List, job_config: JobConfig) -> None:
     start      = time.time()
     chunk_size = max(_batch_size(), BULK_SIZE)
     workers    = min(max(1, CONFIG.MAX_WORKERS), os.cpu_count() or 1)
+    workers    = min(workers, max(1, len(stations_data)))
     batch      = []
     created    = 0
 
-    bar = _make_progress_bar(
-        len(stations_data), f"Create {job_config}", "station"
-    )
+    bar = _make_progress_bar(len(stations_data), "Create", "station")
 
     def collect(future):
         nonlocal created
@@ -432,14 +475,19 @@ def create_series_jobs(stations_data: List, job_config: JobConfig) -> None:
         except Exception as e:
             logger.error(f"Error processing period: {e}")
             bar.update(1)
+            bar.set_postfix_str(_bar_stats(
+                bar, "Stations", "station", created=created + len(batch)
+            ), refresh=True)
             return
         batch.extend(processed_jobs)
         if len(batch) >= chunk_size:
             insert_jobs_bulk(batch)
             created += len(batch)
             batch.clear()
-        bar.set_postfix(jobs=created + len(batch), refresh=False)
         bar.update(1)
+        bar.set_postfix_str(_bar_stats(
+            bar, "Stations", "station", created=created + len(batch)
+        ), refresh=True)
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         pending = set()
@@ -456,6 +504,9 @@ def create_series_jobs(stations_data: List, job_config: JobConfig) -> None:
         insert_jobs_bulk(batch)
         created += len(batch)
 
+    bar.set_postfix_str(_bar_stats(
+        bar, "Stations", "station", created=created
+    ), refresh=True)
     bar.close()
 
     elapsed = time.time() - start
@@ -627,16 +678,40 @@ def trigger_job(job_config: JobConfig, filters, total: int) -> None:
     workers    = max(1, CONFIG.MAX_WORKERS)
     global _limiter
     workers = min(workers, _thread_limit())
+    workers = min(workers, max(1, total))
     if CONFIG.READ_JSON:
         _limiter = None
     else:
         _limiter = _AdaptiveLimiter(
             initial=min(workers, ADAPTIVE_INITIAL), maximum=workers
         )
+    limiter = _limiter
     write_queue.maxsize = batch_size
 
-    bar = _make_progress_bar(total, f"Request {job_config}", "job")
+    bar = _make_progress_bar(total, "Request", "job")
     interactive = not bar.disable
+
+    def refresh_stats(active_limiter, throttle=None):
+        bar.set_postfix_str(_bar_stats(
+            bar, "Jobs", "job", limiter=active_limiter, throttle=throttle
+        ), refresh=True)
+
+    refresh_stats(limiter)
+
+    last_stats = 0.0
+
+    def tick(done):
+        """Refresh stats on real changes (or once a second) and the throttle."""
+
+        nonlocal last_stats
+        now = time.monotonic()
+        remaining = 0.0
+        if limiter is not None:
+            remaining = limiter.pause_until - now
+        throttled = remaining > 0
+        if done or throttled or now - last_stats >= 1.0:
+            refresh_stats(limiter, remaining if throttled else None)
+            last_stats = now
 
     writer = Thread(target=db_writer, args=(interactive,), daemon=True)
     writer.start()
@@ -645,15 +720,23 @@ def trigger_job(job_config: JobConfig, filters, total: int) -> None:
         pending = set()
         for job in iter_jobs(job_config, filters, batch_size):
             pending.add(executor.submit(handle_job_request, job, job_config))
-            if len(pending) >= 2 * workers:
-                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            while len(pending) >= 2 * workers:
+                done, pending = wait(
+                    pending, timeout=0.1, return_when=FIRST_COMPLETED
+                )
                 for future in done:
                     _report_future(future)
-                bar.update(len(done))
+                    bar.update(1)
+                tick(done)
 
-        for future in as_completed(pending):
-            _report_future(future)
-            bar.update(1)
+        while pending:
+            done, pending = wait(
+                pending, timeout=0.1, return_when=FIRST_COMPLETED
+            )
+            for future in done:
+                _report_future(future)
+                bar.update(1)
+            tick(done)
 
     _limiter = None
 
@@ -674,9 +757,14 @@ def trigger_job(job_config: JobConfig, filters, total: int) -> None:
         for key in ("Pending", "Failed", "Invalid", "Completed")
     )
 
-    bar.set_postfix_str(summary, refresh=False)
+    bar.set_postfix_str(_bar_stats(
+        bar, "Jobs", "job", limiter=limiter
+    ), refresh=True)
     bar.close()
-    _announce(summary)
+    if interactive:
+        print(f"\rRequest status: [{summary}]", file=sys.stderr)
+    else:
+        _announce(summary)
 
 
 token_lock = Lock()
@@ -709,10 +797,22 @@ def _is_sql_grammar(response) -> bool:
 def _throttle() -> None:
     """Slow the request pool after the API rejects or rate-limits a request."""
 
+    global _throttle_until
     if _limiter is not None:
         _limiter.throttled()
+        _throttle_until = max(_throttle_until, _limiter.pause_until)
     else:
-        time.sleep(ADAPTIVE_PAUSE)
+        _throttle_until = max(
+            _throttle_until, time.monotonic() + ADAPTIVE_PAUSE
+        )
+
+
+def _wait_throttle() -> None:
+    """Sleep while a throttle pause from an earlier request is still active."""
+
+    remaining = _throttle_until - time.monotonic()
+    if remaining > 0:
+        time.sleep(remaining)
 
 
 def _handle_http_error(job: HidroJob, job_config: JobConfig, e) -> bool:
@@ -767,6 +867,7 @@ def handle_job_request(job: HidroJob, job_config: JobConfig) -> None:
 
     start = time.time()
     success, items = False, []
+    _wait_throttle()
     limiter = _limiter
     try:
         with token_lock:
@@ -1116,6 +1217,7 @@ def run(config: Config):
 
     for job in JobConfig.Base:
         _announce(rule)
+        _print_job_header(job)
         check_base_job(job)
 
     if CONFIG.SKIP_SERIES_JOBS:
@@ -1132,4 +1234,5 @@ def run(config: Config):
             if job not in CONFIG.RUN_FOR:
                 _announce(f"Skiping job for {job}.")
                 continue
+        _print_job_header(job)
         check_series_job(job)
