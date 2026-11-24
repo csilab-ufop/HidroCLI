@@ -295,6 +295,15 @@ def _announce(message: str) -> None:
         logger.info(message)
 
 
+def _announce_idle(message: str) -> None:
+    """Report a job with no pending work in both terminal and log output."""
+
+    if _interactive():
+        tqdm.write(f"\r{message}", file=sys.stderr)
+    else:
+        logger.info(message)
+
+
 def _yesterday() -> datetime:
     """Return yesterday at midnight."""
 
@@ -394,7 +403,7 @@ def check_base_job(job_config: JobConfig.Base) -> None:
             trigger_job(job_config, filters, count)
             check_base_job(job_config)
         else:
-            _announce(f"No pending jobs for {job_config}.")
+            _announce_idle(f"No pending jobs for {job_config}.")
 
 
 def check_series_job(job_config: JobConfig) -> None:
@@ -450,7 +459,7 @@ def trigger_series_jobs(job_config: JobConfig) -> None:
         trigger_job(job_config, filters, count)
         trigger_series_jobs(job_config)
     else:
-        _announce(f"No pending jobs for {job_config}.")
+        _announce_idle(f"No pending jobs for {job_config}.")
 
 
 def create_series_jobs(stations_data: List, job_config: JobConfig) -> None:
