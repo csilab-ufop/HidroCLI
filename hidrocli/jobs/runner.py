@@ -51,8 +51,7 @@ from hidrocli.database.client import (
 )
 from hidrocli.database.hidro import (
     get_period, get_qual_agua_ids, get_registro_ids, get_states,
-    insert_hidro, make_vertical_cross_section, normalize_items, coerce_value,
-    upsert_items,
+    insert_hidro, make_vertical_cross_section, normalize_items, upsert_items,
 )
 
 from requests.exceptions import HTTPError, RequestException
@@ -272,11 +271,11 @@ class _Bar(tqdm):
         return super().__str__().replace("|, ", "| ")
 
 
-def _make_progress_bar(total: int, desc: str, unit: str) -> _Bar:
+def _make_progress_bar(total: int, desc: str) -> _Bar:
     """Return a one-line progress bar, disabled without a terminal."""
 
     return _Bar(
-        total=total, desc=desc, unit=f" {unit}",
+        total=total, desc=desc,
         bar_format="{desc}: {percentage:3.0f}%|{bar}|{postfix}",
         disable=not _interactive(), file=sys.stderr, leave=True,
     )
@@ -466,7 +465,7 @@ def create_series_jobs(stations_data: List, job_config: JobConfig) -> None:
     batch      = []
     created    = 0
 
-    bar = _make_progress_bar(len(stations_data), "Create", "station")
+    bar = _make_progress_bar(len(stations_data), "Create")
 
     def collect(future):
         nonlocal created
@@ -474,11 +473,7 @@ def create_series_jobs(stations_data: List, job_config: JobConfig) -> None:
             processed_jobs = future.result()
         except Exception as e:
             logger.error(f"Error processing period: {e}")
-            bar.update(1)
-            bar.set_postfix_str(_bar_stats(
-                bar, "Stations", "station", created=created + len(batch)
-            ), refresh=True)
-            return
+            processed_jobs = []
         batch.extend(processed_jobs)
         if len(batch) >= chunk_size:
             insert_jobs_bulk(batch)
@@ -688,7 +683,7 @@ def trigger_job(job_config: JobConfig, filters, total: int) -> None:
     limiter = _limiter
     write_queue.maxsize = batch_size
 
-    bar = _make_progress_bar(total, "Request", "job")
+    bar = _make_progress_bar(total, "Request")
     interactive = not bar.disable
 
     def refresh_stats(active_limiter, throttle=None):
@@ -720,7 +715,7 @@ def trigger_job(job_config: JobConfig, filters, total: int) -> None:
         pending = set()
         for job in iter_jobs(job_config, filters, batch_size):
             pending.add(executor.submit(handle_job_request, job, job_config))
-            while len(pending) >= 2 * workers:
+            if len(pending) >= 2 * workers:
                 done, pending = wait(
                     pending, timeout=0.1, return_when=FIRST_COMPLETED
                 )
@@ -1194,18 +1189,6 @@ def filter_repeated_series_items(job_config: JobConfig, items):
             pass
 
     return filtered
-
-
-def convert_json_items(job_config, items):
-    """Coerce string values to Python types (keeps the raw ANA keys)."""
-
-    if isinstance(items, dict):
-        items = [items]
-
-    for item in items:
-        for key, value in item.items():
-            item[key] = coerce_value(value)
-    return items
 
 
 def run(config: Config):

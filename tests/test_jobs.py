@@ -167,55 +167,6 @@ def _load_json_file(job_config):
 
 
 @pytest.mark.parametrize("job_config", [
-    hidrocli.jobs.runner.JobConfig.Base.BASIN,
-    hidrocli.jobs.runner.JobConfig.Series.RAIN,
-])
-def test_convert_json_items(job_config):
-    items = hidrocli.jobs.runner.convert_json_items(job_config, _load_json_file(job_config))
-    match job_config:
-        case hidrocli.jobs.runner.JobConfig.Base.BASIN:
-            for item in items:
-                assert isinstance(item["Data_Ultima_Alteracao"], (datetime, type(None)))
-                assert isinstance(item["Nome_Bacia"], str)
-                assert isinstance(item["codigobacia"], int)
-        case hidrocli.jobs.runner.JobConfig.Series.RAIN:
-            for item in items:
-                for i in range(1, 32):
-                    assert isinstance(item[f'Chuva_{i:02d}'], (float, type(None)))
-                    assert isinstance(item[f'Chuva_{i:02d}_Status'], (int, type(None)))
-                assert isinstance(item["Data_Ultima_Alteracao"], (datetime, type(None)))
-                assert isinstance(item["Data_Hora_Dado"], (datetime, type(None)))
-                assert isinstance(item["Maxima"], float)
-                assert isinstance(item["Maxima_Status"], int)
-                assert isinstance(item["Nivel_Consistencia"], int)
-                assert isinstance(item["Numero_Dias_de_Chuva"], (int, type(None)))
-                assert isinstance(item["Numero_Dias_de_Chuva_Status"], int)
-                assert isinstance(item["Tipo_Medicao_Chuvas"], int)
-                assert isinstance(item["Total"], float)
-                assert isinstance(item["Total_Anual"], (float, type(None)))
-                assert isinstance(item["Total_Anual_Status"], (int, type(None)))
-                assert isinstance(item["Total_Status"], int)
-                assert isinstance(item["codigoestacao"], int)
-
-
-def test_convert_json_items_parses_all_supported_formats():
-    items = hidrocli.jobs.runner.convert_json_items(
-        hidrocli.jobs.runner.JobConfig.Series.RAIN,
-        [
-            {"Data": "2024-01-02 03:04:05.123456"},
-            {"Data": "2024-01-02 03:04:05"},
-            {"Data": "2024-01-02"},
-            {"Data": "03:04:05"},
-        ],
-    )
-
-    assert items[0]["Data"] == datetime(2024, 1, 2, 3, 4, 5, 123456)
-    assert items[1]["Data"] == datetime(2024, 1, 2, 3, 4, 5)
-    assert items[2]["Data"] == datetime(2024, 1, 2)
-    assert items[3]["Data"].time() == datetime(1900, 1, 1, 3, 4, 5).time()
-
-
-@pytest.mark.parametrize("job_config", [
     hidrocli.jobs.runner.JobConfig.Series.RAIN,
 ])
 def test_filter_repeated_series_items(job_config):
@@ -369,7 +320,7 @@ def test_progress_renders_bar_stats_and_throttle(monkeypatch):
     limiter.errors = 2
     limiter.pause_until = time.monotonic() + 1.0
 
-    bar = hidrocli.jobs.runner._make_progress_bar(1, "Request", "job")
+    bar = hidrocli.jobs.runner._make_progress_bar(1, "Request")
     bar.update(1)
     bar.set_postfix_str(hidrocli.jobs.runner._bar_stats(
         bar, "Jobs", "job", limiter=limiter, throttle=1.0
@@ -386,13 +337,12 @@ def test_progress_renders_bar_stats_and_throttle(monkeypatch):
 
 
 @patch('hidrocli.jobs.runner.write_queue')
-@patch('hidrocli.jobs.runner.convert_json_items')
 @patch('hidrocli.jobs.runner.request_job_data')
 @patch('hidrocli.jobs.runner.get_token')
 @pytest.mark.parametrize("save_json", [True, False])
 @pytest.mark.parametrize("read_json", [True, False])
 def test_handle_job_request_passes_json_flags(
-        mock_token, mock_request, mock_convert, mock_queue,
+        mock_token, mock_request, mock_queue,
         monkeypatch, save_json, read_json):
     _set_config(monkeypatch, SAVE_JSON=save_json, READ_JSON=read_json, JSON_DIR="custom/json")
     mock_request.return_value = (True, [])
@@ -411,14 +361,12 @@ def test_handle_job_request_passes_json_flags(
 
 
 @patch('hidrocli.jobs.runner.write_queue')
-@patch('hidrocli.jobs.runner.convert_json_items')
 @patch('hidrocli.jobs.runner.request_job_data')
 @patch('hidrocli.jobs.runner.get_token', return_value="token")
 def test_handle_job_request_tags_items_with_job_id(
-        mock_token, mock_request, mock_convert, mock_queue):
+        mock_token, mock_request, mock_queue):
     items = [{"codigoestacao": 1}]
     mock_request.return_value = (True, items)
-    mock_convert.side_effect = lambda config, value: value
     job = MagicMock()
     job.ID = 42
     job.to_params.return_value = {}
