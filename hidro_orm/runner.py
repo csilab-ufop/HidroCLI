@@ -273,4 +273,4 @@ def heads(kind: DbKind | str) -> tuple[str, ...]:
     """Return the head revisions for ``kind``."""
 
     kind = DbKind(kind)
-    return ScriptDirectory.from_config(_config(kind)).get_heads()
+    return tuple(ScriptDirectory.from_config(_config(kind)).get_heads())
