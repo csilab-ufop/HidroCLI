@@ -30,6 +30,7 @@ import logging
 import time
 
 from datetime import datetime, timedelta
+from queue import Queue
 
 from requests.exceptions import ReadTimeout
 
@@ -384,6 +385,140 @@ def test_trigger_job_read_json_shows_static_workers(
         assert call.kwargs["limiter"] is None
         assert call.kwargs["workers"] == 4
         assert call.kwargs["errors"] == 0
+
+
+def _writer_message(job_config, *, job=None, items=None, worker_time=0.0,
+                    stop_signal=False):
+    """Build one queue item consumed by the writer thread."""
+
+    return hidrocli.jobs.runner.QueueData(
+        job_config=job_config,
+        job=job,
+        items=items,
+        worker_time=worker_time,
+        stop_signal=stop_signal,
+    )
+
+
+def _drain_writer(monkeypatch, messages, *, interactive=False, write=None):
+    """Run ``db_writer`` to completion over preloaded queue messages."""
+
+    queue = Queue()
+    for message in messages:
+        queue.put(message)
+
+    calls = []
+    if write is None:
+        def write(job_config, jobs, items):
+            calls.append((job_config, list(jobs), list(items)))
+            return 0.0
+
+    monkeypatch.setattr(hidrocli.jobs.runner, "write_queue", queue)
+    monkeypatch.setattr(hidrocli.jobs.runner, "write_data", write)
+    hidrocli.jobs.runner.db_writer(interactive=interactive)
+
+    assert queue.unfinished_tasks == 0
+    return calls
+
+
+def test_db_writer_flushes_batched_jobs_and_data(monkeypatch):
+    config = hidrocli.jobs.runner.JobConfig.Series.RAIN
+    job = MagicMock()
+    first = {"RegistroID": 1}
+    second = {"RegistroID": 2}
+
+    calls = _drain_writer(monkeypatch, [
+        _writer_message(config, job=job, items=[first], worker_time=0.4),
+        _writer_message(config, items=[second], worker_time=0.2),
+        _writer_message(config, stop_signal=True),
+    ])
+
+    assert calls == [(config, [job], [first, second])]
+
+
+def test_db_writer_flushes_at_bulk_threshold(monkeypatch):
+    config = hidrocli.jobs.runner.JobConfig.Series.RAIN
+    _set_config(monkeypatch, BATCH_SIZE=1)
+    monkeypatch.setattr(hidrocli.jobs.runner, "BULK_SIZE", 1)
+    first_job, second_job = MagicMock(), MagicMock()
+
+    calls = _drain_writer(monkeypatch, [
+        _writer_message(config, job=first_job, items=[{"ID": 1}]),
+        _writer_message(config, job=second_job, items=[{"ID": 2}]),
+        _writer_message(config, stop_signal=True),
+    ])
+
+    assert calls == [
+        (config, [first_job], [{"ID": 1}]),
+        (config, [second_job], [{"ID": 2}]),
+        (config, [], []),
+    ]
+
+
+def test_db_writer_non_interactive_logs_progress_and_summary(
+        monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="hidrocli.jobs.runner")
+    monkeypatch.setattr(hidrocli.jobs.runner, "PROGRESS_INTERVAL", 0.0)
+    config = hidrocli.jobs.runner.JobConfig.Series.RAIN
+
+    calls = _drain_writer(monkeypatch, [
+        _writer_message(config, items=[{"ID": 1}], worker_time=0.5),
+        _writer_message(config, stop_signal=True),
+    ])
+
+    assert calls == [(config, [], [{"ID": 1}])]
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("1 rows, 0 jobs" in message for message in messages)
+    assert any(
+        "worker /" in message and "writer" in message for message in messages
+    )
+
+
+def test_db_writer_interactive_skips_progress_logs(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="hidrocli.jobs.runner")
+    monkeypatch.setattr(hidrocli.jobs.runner, "PROGRESS_INTERVAL", 0.0)
+    config = hidrocli.jobs.runner.JobConfig.Series.RAIN
+
+    _drain_writer(
+        monkeypatch,
+        [
+            _writer_message(config, items=[{"ID": 1}], worker_time=0.5),
+            _writer_message(config, stop_signal=True),
+        ],
+        interactive=True,
+    )
+
+    assert [
+        record for record in caplog.records
+        if record.name == "hidrocli.jobs.runner"
+        and record.levelno >= logging.INFO
+    ] == []
+
+
+def test_db_writer_drains_after_write_failure(monkeypatch, caplog):
+    caplog.set_level(logging.ERROR, logger="hidrocli.jobs.runner")
+    config = hidrocli.jobs.runner.JobConfig.Series.RAIN
+    _set_config(monkeypatch, BATCH_SIZE=1)
+    monkeypatch.setattr(hidrocli.jobs.runner, "BULK_SIZE", 1)
+    attempts = []
+
+    def broken_write(job_config, jobs, items):
+        attempts.append((job_config, list(jobs), list(items)))
+        raise RuntimeError("disk full")
+
+    calls = _drain_writer(
+        monkeypatch,
+        [
+            _writer_message(config, items=[{"ID": 1}]),
+            _writer_message(config, items=[{"ID": 2}]),
+            _writer_message(config, stop_signal=True),
+        ],
+        write=broken_write,
+    )
+
+    assert calls == []
+    assert attempts == [(config, [], [{"ID": 1}])]
+    assert "disk full" in caplog.text
 
 
 @patch('hidrocli.jobs.runner.trigger_jobs')
