@@ -386,7 +386,7 @@ def test_trigger_job_read_json_shows_static_workers(
         assert call.kwargs["errors"] == 0
 
 
-@patch('hidrocli.jobs.runner.trigger_series_jobs')
+@patch('hidrocli.jobs.runner.trigger_jobs')
 @patch('hidrocli.jobs.runner.update_series_job')
 @patch('hidrocli.jobs.runner.update_series_job_windows')
 @patch('hidrocli.jobs.runner.create_series_jobs')
@@ -879,10 +879,11 @@ def test_check_series_job_warns_for_unknown_station(
 @patch('hidrocli.jobs.runner.create_job_filters', return_value=[])
 @patch('hidrocli.jobs.runner.trigger_job')
 @patch('hidrocli.jobs.runner.count_job', side_effect=[2, 0])
-def test_trigger_series_jobs_retries_until_none(mock_count, mock_trigger,
-                                                mock_filters):
-    hidrocli.jobs.runner.trigger_series_jobs(
-        hidrocli.jobs.runner.JobConfig.Series.RAIN
+def test_trigger_jobs_retries_until_none(mock_count, mock_trigger,
+                                         mock_filters):
+    hidrocli.jobs.runner.trigger_jobs(
+        hidrocli.jobs.runner.JobConfig.Series.RAIN,
+        hidrocli.jobs.runner.SERIES_RETRY_DEPTH,
     )
 
     assert mock_count.call_count == 2
@@ -894,6 +895,23 @@ def test_trigger_series_jobs_retries_until_none(mock_count, mock_trigger,
         hidrocli.jobs.runner.JobConfig.Status.PENDING.value,
     ]
     assert mock_filters.call_args.kwargs["max_retries"] is True
+
+
+@patch('hidrocli.jobs.runner.create_job_filters', return_value=[])
+@patch('hidrocli.jobs.runner.trigger_job')
+@patch('hidrocli.jobs.runner.count_job', return_value=1)
+def test_trigger_jobs_stops_at_retry_depth(mock_count, mock_trigger,
+                                           mock_filters, caplog):
+    """Persistent pending jobs stop after the configured same-run retries."""
+
+    with caplog.at_level(logging.WARNING):
+        hidrocli.jobs.runner.trigger_jobs(
+            hidrocli.jobs.runner.JobConfig.Series.RAIN,
+            hidrocli.jobs.runner.SERIES_RETRY_DEPTH,
+        )
+
+    assert mock_trigger.call_count == 1 + hidrocli.jobs.runner.SERIES_RETRY_DEPTH
+    assert "remain pending/failed after" in caplog.text
 
 
 def test_process_period_creates_yearly_windows():
@@ -1013,7 +1031,7 @@ def test_update_series_job_windows_inserts_missing_year(
     assert inserted.Status == hidrocli.jobs.runner.JobConfig.Status.PENDING.value
 
 
-@patch('hidrocli.jobs.runner.trigger_series_jobs')
+@patch('hidrocli.jobs.runner.trigger_jobs')
 @patch('hidrocli.jobs.runner.update_series_job')
 @patch('hidrocli.jobs.runner.update_series_job_windows')
 @patch('hidrocli.jobs.runner.create_series_jobs')
@@ -1051,7 +1069,7 @@ def test_check_series_job_applies_date_overrides(
     mock_trigger.assert_called_once()
 
 
-@patch('hidrocli.jobs.runner.trigger_series_jobs')
+@patch('hidrocli.jobs.runner.trigger_jobs')
 @patch('hidrocli.jobs.runner.update_series_job')
 @patch('hidrocli.jobs.runner.update_series_job_windows')
 @patch('hidrocli.jobs.runner.create_series_jobs')
@@ -1080,13 +1098,13 @@ def test_check_series_job_keeps_stale_reset_without_final_date(
 @patch('hidrocli.jobs.runner.create_job_filters', return_value=[])
 @patch('hidrocli.jobs.runner.trigger_job')
 @patch('hidrocli.jobs.runner.count_job', return_value=0)
-def test_trigger_series_jobs_passes_date_bounds(
+def test_trigger_jobs_passes_date_bounds(
         mock_count, mock_trigger, mock_filters, monkeypatch):
     initial = datetime(2020, 1, 1)
     final   = datetime(2021, 1, 1)
     _set_config(monkeypatch, INITIAL_DATE=initial, FINAL_DATE=final)
 
-    hidrocli.jobs.runner.trigger_series_jobs(
+    hidrocli.jobs.runner.trigger_jobs(
         hidrocli.jobs.runner.JobConfig.Series.RAIN
     )
 

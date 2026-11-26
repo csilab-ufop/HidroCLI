@@ -68,15 +68,22 @@ def _request_hidro_ws(endpoint, headers, params={}):
     try:
         response = requests.get(f"{url}{endpoint}", headers=headers, params=params, timeout=300)
     except requests.exceptions.RequestException as e:
-        match type(e).__name__:
-            case "SSLError" | "ConnectionError":
-                logger.trace(
-                    f"[REQUEST]: {type(e).__name__} for {endpoint}, params: {params}: {e}"
-                )
-            case _:
-                logger.error(
-                    f"[REQUEST]: unhandled {type(e).__name__} for {endpoint}, params: {params}: {e}"
-                )
+        if isinstance(e, requests.exceptions.Timeout):
+            logger.verbose(
+                f"[REQUEST]: timeout {type(e).__name__} for {endpoint}, "
+                f"params: {params}: {e}"
+            )
+        elif isinstance(e, (requests.exceptions.SSLError,
+                            requests.exceptions.ConnectionError)):
+            logger.trace(
+                f"[REQUEST]: {type(e).__name__} for {endpoint}, "
+                f"params: {params}: {e}"
+            )
+        else:
+            logger.error(
+                f"[REQUEST]: unhandled {type(e).__name__} for {endpoint}, "
+                f"params: {params}: {e}"
+            )
         raise
     if response.ok:
         try:

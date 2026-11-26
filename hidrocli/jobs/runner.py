@@ -80,6 +80,10 @@ a larger batch means fewer SQLite commits without hydrating more jobs.
 """
 
 
+SERIES_RETRY_DEPTH = 3
+"""Additional same-run retry passes after the first series scheduling pass."""
+
+
 PROGRESS_INTERVAL = 10.0
 """Seconds between progress lines emitted by the writer thread."""
 
@@ -541,19 +545,7 @@ def check_telemetry_job(job_config: JobConfig) -> None:
     if planning:
         create_telemetry_jobs(planning, job_config)
 
-    status  = [JobConfig.Status.FAILED.value, JobConfig.Status.PENDING.value]
-    filters = create_job_filters(
-        job_config, status, last_check=False,
-        stations=CONFIG.STATIONS, max_retries=True,
-        initial_date=CONFIG.INITIAL_DATE,
-        final_date=CONFIG.FINAL_DATE,
-    )
-    count = count_job(job_config, filters)
-    if count:
-        _announce(f"Initiating {count} jobs for {job_config}")
-        trigger_job(job_config, filters, count)
-    else:
-        _announce_idle(f"No pending jobs for {job_config}.")
+    trigger_jobs(job_config)
 
 
 _token_cache: Optional[Token] = None
@@ -713,11 +705,11 @@ def check_series_job(job_config: JobConfig) -> None:
 
     if CONFIG.FINAL_DATE is None:
         update_series_job(job_config)
-    trigger_series_jobs(job_config)
+    trigger_jobs(job_config, SERIES_RETRY_DEPTH)
 
 
-def trigger_series_jobs(job_config: JobConfig) -> None:
-    """Trigger pending and failed jobs, retrying within the same run."""
+def trigger_jobs(job_config: JobConfig, retry_depth: int = 0) -> None:
+    """Trigger pending and failed jobs, optionally retrying within the run."""
 
     status = [JobConfig.Status.FAILED.value, JobConfig.Status.PENDING.value]
     filters = create_job_filters(job_config, status, last_check=False,
@@ -725,12 +717,27 @@ def trigger_series_jobs(job_config: JobConfig) -> None:
                                  initial_date=CONFIG.INITIAL_DATE,
                                  final_date=CONFIG.FINAL_DATE)
     count = count_job(job_config, filters)
-    if count:
+    if not count:
+        _announce_idle(f"No pending jobs for {job_config}.")
+        return
+
+    for attempt in range(retry_depth + 1):
         _announce(f"Initiating {count} jobs for {job_config}")
         trigger_job(job_config, filters, count)
-        trigger_series_jobs(job_config)
-    else:
-        _announce_idle(f"No pending jobs for {job_config}.")
+        if attempt == retry_depth:
+            break
+        count = count_job(job_config, filters)
+        if not count:
+            return
+
+    if retry_depth:
+        remaining = count_job(job_config, filters)
+        if remaining:
+            logger.warning(
+                f"{remaining} jobs for {job_config} remain pending/failed "
+                f"after {retry_depth} same-run retries; leaving them for the "
+                f"next run."
+            )
 
 
 def create_series_jobs(stations_data: List, job_config: JobConfig,
@@ -1132,7 +1139,7 @@ def _handle_http_error(job: HidroJob, job_config: JobConfig, e) -> bool:
 
     code = e.response.status_code if e.response is not None else None
     if code == 401:
-        logger.warning(f"[WORKER JOB {job.ID}]: Unauthorized, skipping.")
+        logger.verbose(f"[WORKER JOB {job.ID}]: Unauthorized, skipping.")
         return True
     if code == 429:
         _throttle()

@@ -87,6 +87,23 @@ def test_request_hidro_ws_timeout_raises(mock_get):
         _request_hidro_ws("/endpoint", {})
 
 
+@patch('hidrocli.webservices.logger')
+@patch('hidrocli.webservices.requests.get')
+def test_request_hidro_ws_timeout_logs_verbose(mock_get, mock_logger):
+    """A timeout is an expected transient condition, not an ERROR."""
+
+    mock_get.side_effect = requests.exceptions.ReadTimeout("read timed out")
+
+    with pytest.raises(requests.exceptions.ReadTimeout):
+        _request_hidro_ws("/endpoint", {})
+
+    assert any(
+        "timeout ReadTimeout" in str(call)
+        for call in mock_logger.verbose.call_args_list
+    )
+    mock_logger.error.assert_not_called()
+
+
 @patch('hidrocli.webservices.requests.get')
 def test_request_hidro_ws_connection_error_raises(mock_get):
     """Test that a connection error is logged and re-raised."""
