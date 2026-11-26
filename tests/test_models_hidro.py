@@ -76,5 +76,40 @@ def test_water_quality_status_uses_qual_agua_id():
     assert sample.QualAgua001Status == 1
 
 
+def test_telemetry_maps_measurement_fields():
+    sample = Telemetry.from_json({
+        "EstacaoCodigo":          12345,
+        "Data_Hora_Medicao":      datetime(2024, 5, 28),
+        "Data_Atualizacao":       datetime(2024, 5, 29),
+        "Bateria":                12.6,
+        "Cota_Sensor":            1114.3,
+        "Cota_Sensor_Status":     1,
+        "Chuva_Acumulada":        1.2,
+        "Chuva_Acumulada_Status": 1,
+        "Vazao_Adotada":          87.12,
+        "Vazao_Adotada_Status":   1,
+    })
+
+    assert sample.EstacaoCodigo == 12345
+    assert sample.Data_Hora_Medicao == datetime(2024, 5, 28)
+    assert sample.Data_Atualizacao == datetime(2024, 5, 29)
+    assert sample.Bateria == 12.6
+    assert sample.Cota_Sensor == 1114.3
+    assert sample.Cota_Sensor_Status == 1
+    assert sample.Chuva_Acumulada == 1.2
+    assert sample.Chuva_Acumulada_Status == 1
+    assert sample.Vazao_Adotada == 87.12
+    assert sample.Vazao_Adotada_Status == 1
+
+
+def test_telemetry_verify_keys_use_station_and_measurement_time():
+    from hidrocli.database import get_verify_keys
+
+    assert get_verify_keys("Telemetria") == {
+        "EstacaoCodigo":     "EstacaoCodigo",
+        "Data_Hora_Medicao": "Data_Hora_Medicao",
+    }
+
+
 def test_dummy():
     assert True

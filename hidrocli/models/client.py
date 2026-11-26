@@ -73,6 +73,13 @@ class SeriesTables(StrEnum):
     CROSS_SECTION     = "PerfilTransversal"
     STAGE             = "Cotas"
 
+
+class TelemetryTables(StrEnum):
+    """Telemetric station series tables loaded per search window."""
+
+    TELEMETRY = "Telemetria"
+
+
 class Credentials(ClientBase):
     """ Client authentication credentials.
 
@@ -227,6 +234,46 @@ class SeriesJobs(HidroJob):
             "Tipo Filtro Data":          filter_,
             "Data Inicial (yyyy-MM-dd)": f"{self.FromDate.strftime('%Y-%m-%d')}",
             "Data Final (yyyy-MM-dd)":   f"{self.ToDate.strftime('%Y-%m-%d')}"
+        }
+
+
+class TelemetryJobs(HidroJob):
+    """ Jobs that request one telemetry search window. """
+
+    __tablename__ = 'TelemetryJobs'
+    __table_args__ = (
+        UniqueConstraint('StationID', 'Date', name='uq_telemetry_job'),
+    )
+
+    StationID = Column(BigInteger, nullable=False)
+    """ int: station code whose data will be requested. """
+
+    Date      = Column(DateTime, nullable=False)
+    """ datetime: Data de Busca date for the request. """
+
+    Range     = Column(String, nullable=False)
+    """ string: ANA range token, for example DIAS_30 or MINUTO_5. """
+
+    Retries   = Column(Integer, default=0)
+    """ int: number of failed attempts; job filters stop after 3. """
+
+    def __iter__(self):
+        """ Yield the telemetry-job fields as key/value pairs. """
+        yield from super().__iter__()
+        yield from {
+            "StationID": self.StationID,
+            "Date":      self.Date,
+            "Range":     self.Range,
+            "Retries":   self.Retries
+        }.items()
+
+    def to_params(self, filter_="DATA_ULTIMA_ATUALIZACAO"):
+        """ Return the API query parameters for the telemetry job. """
+        return {
+            "Código da Estação":         self.StationID,
+            "Tipo Filtro Data":          filter_,
+            "Data de Busca (yyyy-MM-dd)": f"{self.Date.strftime('%Y-%m-%d')}",
+            "Range Intervalo de busca":  self.Range
         }
 
 

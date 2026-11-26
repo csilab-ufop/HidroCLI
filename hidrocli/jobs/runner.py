@@ -39,22 +39,25 @@ from datetime    import datetime, timedelta, date
 from typing      import List, NamedTuple, Optional
 
 from hidrocli.database import (
-    HidroJob, SeriesJobs, Token, JobStatus, BaseTables, SeriesTables,
+    HidroJob, SeriesJobs, TelemetryJobs, Token, JobStatus, BaseTables,
+    SeriesTables, TelemetryTables,
 )
 
 from hidrocli.database.client import (
     add_token, count_client, count_job, count_job_by_status,
     create_job_filters, get_credentials, get_job_model, get_station_ids,
-    get_token_model, insert_jobs, insert_jobs_bulk, iter_jobs,
-    make_series_job, reset_series_job_dates, update_job_mappings, update_jobs,
-    update_token, upsert_job_records,
+    get_telemetry_job_bounds, get_telemetry_job_keys, get_token_model,
+    insert_jobs, insert_jobs_bulk, iter_jobs, make_series_job,
+    reset_series_job_dates, update_job_mappings, update_jobs, update_token,
+    upsert_job_records,
 )
 from hidrocli.database.hidro import (
     get_period, get_qual_agua_ids, get_registro_ids, get_states,
-    insert_hidro, make_vertical_cross_section, normalize_items, upsert_items,
+    get_telemetry_stations, insert_hidro, make_vertical_cross_section,
+    normalize_items, upsert_items,
 )
 
-from requests.exceptions import HTTPError, RequestException
+from requests.exceptions import HTTPError, RequestException, Timeout
 
 from tqdm import tqdm
 
@@ -75,6 +78,10 @@ BULK_SIZE = 5000
 Independent of ``--batch-size`` (which bounds the scheduling page and queue):
 a larger batch means fewer SQLite commits without hydrating more jobs.
 """
+
+
+SERIES_RETRY_DEPTH = 3
+"""Additional same-run retry passes after the first series scheduling pass."""
 
 
 PROGRESS_INTERVAL = 10.0
@@ -168,9 +175,10 @@ class _AdaptiveLimiter:
 class JobConfig:
     """ Job name groups and status. """
 
-    Base   = BaseTables
-    Series = SeriesTables
-    Status = JobStatus
+    Base      = BaseTables
+    Series    = SeriesTables
+    Telemetry = TelemetryTables
+    Status    = JobStatus
 
 
 class QueueData(NamedTuple):
@@ -238,8 +246,8 @@ def _clock(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
-def _bar_stats(bar, label: str, unit: str, created=None, limiter=None,
-               throttle=None) -> str:
+def _bar_stats(bar, label: str, unit: str, created=None, updated=None,
+               workers=None, errors=None, limiter=None, throttle=None) -> str:
     """Return the stats shown after a progress bar."""
 
     data      = bar.format_dict
@@ -256,12 +264,28 @@ def _bar_stats(bar, label: str, unit: str, created=None, limiter=None,
     ]
     if created is not None:
         fields.append(f"jobs created: {created}")
+    if updated is not None:
+        fields.append(f"jobs updated: {updated}")
     if limiter is not None:
         fields.append(f"Workers: {limiter.limit}/{limiter.maximum}")
         fields.append(f"errors {limiter.errors}")
+    else:
+        if workers is not None:
+            fields.append(f"Workers: {workers}/{workers}")
+        if errors is not None:
+            fields.append(f"errors {errors}")
     if throttle is not None:
         fields.append(f"throttle {throttle:.1f}s")
     return f"{label} {n}/{total} [" + ", ".join(fields) + "]"
+
+
+def _set_plan_stats(bar, stats) -> None:
+    """Refresh a planning bar with cumulative created/updated counts."""
+
+    bar.set_postfix_str(_bar_stats(
+        bar, "Stations", "station",
+        created=stats["created"], updated=stats["updated"],
+    ), refresh=True)
 
 
 class _Bar(tqdm):
@@ -288,19 +312,12 @@ def _print_job_header(job_config) -> None:
         tqdm.write(f"\r\n{job_config}:", file=sys.stderr)
 
 
-def _announce(message: str) -> None:
-    """Log an INFO line, suppressed while a live progress bar is active."""
+def _announce(message: str, idle: bool = False) -> None:
+    """Log an INFO line, or write it when idle on an interactive terminal."""
 
-    if not _interactive():
-        logger.info(message)
-
-
-def _announce_idle(message: str) -> None:
-    """Report a job with no pending work in both terminal and log output."""
-
-    if _interactive():
+    if _interactive() and idle:
         tqdm.write(f"\r{message}", file=sys.stderr)
-    else:
+    elif not _interactive():
         logger.info(message)
 
 
@@ -312,9 +329,11 @@ def _yesterday() -> datetime:
     )
 
 
-def _as_datetime(value):
+def _as_datetime(value, override=None):
     """Normalize a database or command-line date, leaving unknown values."""
 
+    if override is not None:
+        value = override
     if isinstance(value, date) and not isinstance(value, datetime):
         return datetime.combine(value, datetime.min.time())
     if isinstance(value, str):
@@ -325,6 +344,202 @@ def _as_datetime(value):
     return value
 
 
+TELEMETRY_RANGES = {
+    **{f"MINUTO_{minutes}": timedelta(minutes=minutes)
+       for minutes in (5, 10, 15, 30)},
+    **{f"HORA_{hours}": timedelta(hours=hours)
+       for hours in range(1, 25)},
+    **{f"DIAS_{days}": timedelta(days=days)
+       for days in (2, 7, 14, 21, 30)},
+}
+
+
+def telemetry_range(remaining: timedelta) -> str:
+    """Return the smallest range token that covers ``remaining``."""
+
+    for token, duration in TELEMETRY_RANGES.items():
+        if duration >= remaining:
+            return token
+    return "DIAS_30"
+
+
+def telemetry_windows(start, end, active=False):
+    """Return ``(Date, Range)`` windows for a station telemetry period.
+
+    A midnight Fim is treated as inclusive dates. A Fim with a time uses the
+    exact datetime difference, allowing HORA/MINUTO tails. An active station
+    (null Fim) always uses DIAS_30. A sub-day range is only used for the final
+    tail, because Data de Busca is date-only.
+    """
+
+    start = _as_datetime(start)
+    end   = _as_datetime(end)
+    windows = []
+    if start is None or end is None or start > end:
+        return windows
+
+    current = start
+    while current <= end:
+        if active:
+            token = "DIAS_30"
+        elif end.time() == datetime.min.time():
+            remaining = timedelta(days=(end.date() - current.date()).days + 1)
+            token = telemetry_range(remaining)
+        else:
+            token = telemetry_range(end - current)
+        step = TELEMETRY_RANGES[token]
+        windows.append((current.date(), token))
+        if step < timedelta(days=1):
+            break
+        current += step
+    return windows
+
+
+def _telemetry_station_windows(row, yesterday):
+    """Return every ``(StationID, Date, Range)`` window for one station row."""
+
+    station = row[0]
+    start   = _as_datetime(row[1], CONFIG.INITIAL_DATE)
+    end     = _as_datetime(row[2], CONFIG.FINAL_DATE)
+    if start is None:
+        return []
+    if end is None:
+        windows = telemetry_windows(start, yesterday, active=True)
+    elif start > end:
+        logger.debug(
+            f"Telemetry: invalid period {start}..{end} for station {station}"
+        )
+        return []
+    else:
+        windows = telemetry_windows(start, end, active=False)
+    return [(station, window_date, range_) for window_date, range_ in windows]
+
+
+def _write_telemetry_jobs(plan, job_config):
+    """Insert/update one bounded batch of telemetry windows."""
+
+    station_ids = {station for station, _, _ in plan}
+    existing = get_telemetry_job_keys(job_config, station_ids)
+
+    new_jobs = []
+    updates  = []
+    for station, window_date, range_ in plan:
+        current = existing.get((station, window_date))
+        if current is None:
+            new_jobs.append(TelemetryJobs(
+                HidroTable = job_config,
+                StationID  = station,
+                Date       = datetime.combine(window_date, datetime.min.time()),
+                Range      = range_,
+                Status     = JobConfig.Status.PENDING.value,
+                Retries    = 0,
+            ))
+            continue
+
+        job_id, current_range = current
+        if current_range != range_:
+            updates.append({
+                "ID":      job_id,
+                "Range":   range_,
+                "Status":  JobConfig.Status.PENDING.value,
+                "Retries": 0,
+            })
+
+    if new_jobs:
+        insert_jobs_bulk(new_jobs)
+    if updates:
+        update_job_mappings(job_config, updates)
+    return len(new_jobs), len(updates)
+
+
+def create_telemetry_jobs(stations, job_config, today=None) -> None:
+    """Create or update the telemetry jobs for the given station rows.
+
+    Stations are processed in bounded batches. A station is never split across
+    batches, so the same ``(StationID, Date)`` window cannot be inserted twice.
+    """
+
+    yesterday  = (today or date.today()) - timedelta(days=1)
+    chunk_size = _batch_size()
+    stations   = list(stations)
+    batch      = []
+    stats      = {"created": 0, "updated": 0}
+
+    bar = _make_progress_bar(len(stations), "Check")
+
+    def flush():
+        new, changed = _write_telemetry_jobs(batch, job_config)
+        stats["created"] += new
+        stats["updated"] += changed
+        batch.clear()
+
+    for row in stations:
+        batch.extend(_telemetry_station_windows(row, yesterday))
+        if len(batch) >= chunk_size:
+            flush()
+        bar.update(1)
+        _set_plan_stats(bar, stats)
+
+    if batch:
+        flush()
+
+    _set_plan_stats(bar, stats)
+    bar.close()
+
+    _announce(
+        f"Telemetry: {stats['created']} new jobs, "
+        f"{stats['updated']} updated jobs"
+    )
+
+
+def _telemetry_tail_rows(stations, existing, job_config):
+    """Return due active-station rows that need newer telemetry windows."""
+
+    active = [
+        row for row in stations
+        if row[0] in existing and row[2] is None
+    ]
+    if not active:
+        return []
+
+    bounds = get_telemetry_job_bounds(job_config, [row[0] for row in active])
+    yesterday = date.today() - timedelta(days=1)
+    rows = []
+    for row in active:
+        latest = bounds.get(row[0])
+        if latest is None:
+            rows.append(row)
+            continue
+        next_date = latest + TELEMETRY_RANGES["DIAS_30"]
+        if next_date.date() <= yesterday:
+            rows.append((row[0], latest, None))
+    return rows
+
+
+def check_telemetry_job(job_config: JobConfig) -> None:
+    """Create/update telemetry jobs, then request the pending or failed ones.
+
+    Stations without any job get a full plan. Existing stations are only
+    reconciled when a date window was requested, otherwise only active
+    stations receive new tail windows once the latest one is exhausted.
+    """
+
+    stations = get_telemetry_stations(CONFIG.STATIONS or None)
+    existing = get_station_ids(job_config, CONFIG.STATIONS)
+    planning = [row for row in stations if row[0] not in existing]
+
+    if existing and (CONFIG.INITIAL_DATE is not None or
+                     CONFIG.FINAL_DATE is not None):
+        planning.extend(row for row in stations if row[0] in existing)
+    elif existing:
+        planning.extend(_telemetry_tail_rows(stations, existing, job_config))
+
+    if planning:
+        create_telemetry_jobs(planning, job_config)
+
+    trigger_jobs(job_config)
+
+
 _token_cache: Optional[Token] = None
 """Private Token global to control expiration time."""
 
@@ -333,6 +548,36 @@ _limiter: Optional[_AdaptiveLimiter] = None
 
 _throttle_until = 0.0
 """Monotonic time before which no new request should be made after a throttle."""
+
+_request_error_lock = Lock()
+_request_errors = 0
+"""API failures observed while reading cached payloads this run."""
+
+
+def _reset_request_errors() -> None:
+    """Clear the per-request-phase API failure counter."""
+
+    global _request_errors
+    with _request_error_lock:
+        _request_errors = 0
+
+
+def _record_request_error() -> None:
+    """Count an API failure when ``--read-json`` falls back to the network."""
+
+    if not CONFIG.READ_JSON:
+        return
+    global _request_errors
+    with _request_error_lock:
+        _request_errors += 1
+
+
+def _request_error_count() -> int:
+    """Return the API failures counted in the current request phase."""
+
+    with _request_error_lock:
+        return _request_errors
+
 
 def get_token() -> Token.Token:
     """Authenticate and return access token.
@@ -375,23 +620,13 @@ def check_base_job(job_config: JobConfig.Base) -> None:
     filters = create_job_filters(job_config, None, last_check=False)
     if not count_job(job_config, filters):
         _announce(f"Creating jobs for {job_config}.")
-        job_model = get_job_model(job_config)
-        jobs = []
-        match job_config:
-            case JobConfig.Base.STATION:
-                for state in get_states():
-                    job = job_model(
-                        HidroTable = job_config,
-                        Status     = JobConfig.Status.PENDING.value,
-                        UF         = state.Sigla
-                    )
-                    jobs.append(job)
-            case _:
-                job = job_model(
-                    HidroTable = job_config,
-                    Status     = JobConfig.Status.PENDING.value
-                )
-                jobs.append(job)
+        model = get_job_model(job_config)
+        status = JobConfig.Status.PENDING.value
+        if job_config == JobConfig.Base.STATION:
+            jobs = [model(HidroTable=job_config, Status=status,
+                          UF=state.Sigla) for state in get_states()]
+        else:
+            jobs = [model(HidroTable=job_config, Status=status)]
         insert_jobs(jobs)
         check_base_job(job_config)
     else:
@@ -403,7 +638,7 @@ def check_base_job(job_config: JobConfig.Base) -> None:
             trigger_job(job_config, filters, count)
             check_base_job(job_config)
         else:
-            _announce_idle(f"No pending jobs for {job_config}.")
+            _announce(f"No pending jobs for {job_config}.", idle=True)
 
 
 def check_series_job(job_config: JobConfig) -> None:
@@ -416,9 +651,9 @@ def check_series_job(job_config: JobConfig) -> None:
     for data in get_period(job_config).all():
         if selected and data[0] not in selected:
             continue
-        start = CONFIG.INITIAL_DATE if CONFIG.INITIAL_DATE is not None else data[1]
-        end   = CONFIG.FINAL_DATE   if CONFIG.FINAL_DATE   is not None else data[2]
-        period_data.append((data[0], _as_datetime(start), _as_datetime(end)))
+        start = _as_datetime(data[1], CONFIG.INITIAL_DATE)
+        end   = _as_datetime(data[2], CONFIG.FINAL_DATE)
+        period_data.append((data[0], start, end))
 
     if selected:
         missing_stations = selected - {data[0] for data in period_data}
@@ -430,23 +665,33 @@ def check_series_job(job_config: JobConfig) -> None:
 
     existing = get_station_ids(job_config, CONFIG.STATIONS)
     missing  = [data for data in period_data if data[0] not in existing]
-    if missing:
-        _announce(f"Creating jobs from {len(missing)} stations for {job_config}")
-        create_series_jobs(missing, job_config)
-
+    reconcile = []
     if CONFIG.INITIAL_DATE is not None or CONFIG.FINAL_DATE is not None:
-        update_series_job_windows(
-            job_config,
-            [data for data in period_data if data[0] in existing],
-        )
+        reconcile = [data for data in period_data if data[0] in existing]
+
+    planning = missing + reconcile
+    if planning:
+        stats = {"created": 0, "updated": 0}
+        bar   = _make_progress_bar(len(planning), "Check")
+        if missing:
+            _announce(
+                f"Creating jobs from {len(missing)} stations for {job_config}"
+            )
+            create_series_jobs(missing, job_config, bar=bar, stats=stats)
+        if reconcile:
+            update_series_job_windows(
+                job_config, reconcile, bar=bar, stats=stats,
+            )
+        _set_plan_stats(bar, stats)
+        bar.close()
 
     if CONFIG.FINAL_DATE is None:
         update_series_job(job_config)
-    trigger_series_jobs(job_config)
+    trigger_jobs(job_config, SERIES_RETRY_DEPTH)
 
 
-def trigger_series_jobs(job_config: JobConfig) -> None:
-    """Trigger pending and failed jobs, retrying within the same run."""
+def trigger_jobs(job_config: JobConfig, retry_depth: int = 0) -> None:
+    """Trigger pending and failed jobs, optionally retrying within the run."""
 
     status = [JobConfig.Status.FAILED.value, JobConfig.Status.PENDING.value]
     filters = create_job_filters(job_config, status, last_check=False,
@@ -454,27 +699,50 @@ def trigger_series_jobs(job_config: JobConfig) -> None:
                                  initial_date=CONFIG.INITIAL_DATE,
                                  final_date=CONFIG.FINAL_DATE)
     count = count_job(job_config, filters)
-    if count:
+    if not count:
+        _announce(f"No pending jobs for {job_config}.", idle=True)
+        return
+
+    for attempt in range(retry_depth + 1):
         _announce(f"Initiating {count} jobs for {job_config}")
         trigger_job(job_config, filters, count)
-        trigger_series_jobs(job_config)
-    else:
-        _announce_idle(f"No pending jobs for {job_config}.")
+        if attempt == retry_depth:
+            break
+        count = count_job(job_config, filters)
+        if not count:
+            return
+
+    if retry_depth:
+        remaining = count_job(job_config, filters)
+        if remaining:
+            logger.warning(
+                f"{remaining} jobs for {job_config} remain pending/failed "
+                f"after {retry_depth} same-run retries; leaving them for the "
+                f"next run."
+            )
 
 
-def create_series_jobs(stations_data: List, job_config: JobConfig) -> None:
+def create_series_jobs(stations_data: List, job_config: JobConfig,
+                       bar=None, stats=None) -> int:
     """ Creates Series Jobs for each station received for a given JobConfig.
     Preprocess all years from "Start Date" to "End Date" that will become a job request.
     Jobs are written in bounded chunks to keep memory flat.
-    """
-    start      = time.time()
-    chunk_size = max(_batch_size(), BULK_SIZE)
-    workers    = min(max(1, CONFIG.MAX_WORKERS), os.cpu_count() or 1)
-    workers    = min(workers, max(1, len(stations_data)))
-    batch      = []
-    created    = 0
 
-    bar = _make_progress_bar(len(stations_data), "Create")
+    ``bar`` and ``stats`` may be shared with the date-window reconciliation step
+    so one Check bar reports both created and updated jobs.
+    """
+    start         = time.time()
+    stations_data = list(stations_data)
+    chunk_size    = max(_batch_size(), BULK_SIZE)
+    workers       = min(max(1, CONFIG.MAX_WORKERS), os.cpu_count() or 1)
+    workers       = min(workers, max(1, len(stations_data)))
+    batch         = []
+    created       = 0
+    own_bar       = bar is None
+    if stats is None:
+        stats = {"created": 0, "updated": 0}
+    if bar is None:
+        bar = _make_progress_bar(len(stations_data), "Check")
 
     def collect(future):
         nonlocal created
@@ -487,11 +755,13 @@ def create_series_jobs(stations_data: List, job_config: JobConfig) -> None:
         if len(batch) >= chunk_size:
             insert_jobs_bulk(batch)
             created += len(batch)
+            stats["created"] += len(batch)
             batch.clear()
         bar.update(1)
-        bar.set_postfix_str(_bar_stats(
-            bar, "Stations", "station", created=created + len(batch)
-        ), refresh=True)
+        _set_plan_stats(bar, {
+            "created": stats["created"] + len(batch),
+            "updated": stats["updated"],
+        })
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         pending = set()
@@ -507,14 +777,15 @@ def create_series_jobs(stations_data: List, job_config: JobConfig) -> None:
     if batch:
         insert_jobs_bulk(batch)
         created += len(batch)
+        stats["created"] += len(batch)
 
-    bar.set_postfix_str(_bar_stats(
-        bar, "Stations", "station", created=created
-    ), refresh=True)
-    bar.close()
+    _set_plan_stats(bar, stats)
+    if own_bar:
+        bar.close()
 
     elapsed = time.time() - start
     _announce(f"Created {created} jobs for {job_config} in {elapsed:.2f} seconds")
+    return created
 
 
 def process_period(station_code, start_date, end_date, job_config):
@@ -556,42 +827,38 @@ def process_period(station_code, start_date, end_date, job_config):
     return jobs
 
 
-def _take_job(jobs, predicate):
-    """Remove and return the first job matching ``predicate``."""
-
-    for index, job in enumerate(jobs):
-        if predicate(job):
-            return jobs.pop(index)
-    return None
-
-
 def _reconcile_jobs(jobs, desired_jobs):
     """Return ``(updates, new_jobs)`` for one station's desired windows."""
 
     updates, new_jobs = [], []
     for desired in desired_jobs:
-        if _take_job(jobs, lambda job:
-                     job.FromDate == desired.FromDate and
-                     job.ToDate == desired.ToDate):
+        window = (desired.FromDate, desired.ToDate)
+        exact = next((job for job in jobs
+                      if (job.FromDate, job.ToDate) == window), None)
+        if exact is not None:
+            jobs.remove(exact)
             continue
 
-        match = _take_job(jobs, lambda job:
-                          job.FromDate < desired.ToDate and
-                          job.ToDate > desired.FromDate)
-        if match is None:
+        overlap = next((job for job in jobs
+                        if job.FromDate < desired.ToDate and
+                           job.ToDate > desired.FromDate), None)
+        if overlap is None:
             new_jobs.append(desired)
-        else:
-            updates.append({
-                "ID":       match.ID,
-                "FromDate": desired.FromDate,
-                "ToDate":   desired.ToDate,
-                "Status":   desired.Status,
-                "Retries":  0,
-            })
+            continue
+
+        jobs.remove(overlap)
+        updates.append({
+            "ID":       overlap.ID,
+            "FromDate": desired.FromDate,
+            "ToDate":   desired.ToDate,
+            "Status":   desired.Status,
+            "Retries":  0,
+        })
     return updates, new_jobs
 
 
-def update_series_job_windows(job_config: JobConfig, stations_data) -> None:
+def update_series_job_windows(job_config: JobConfig, stations_data,
+                              bar=None, stats=None):
     """Reconcile existing series jobs with the requested station windows.
 
     Jobs whose dates already match a desired yearly window are kept
@@ -599,17 +866,26 @@ def update_series_job_windows(job_config: JobConfig, stations_data) -> None:
     dates are updated; if no overlap exists, a new job is inserted. Jobs
     outside the requested interval are kept but are not queued for this run
     (see :func:`create_job_filters`).
+
+    ``bar`` and ``stats`` may be shared with missing-job creation so one Check
+    bar reports both created and updated jobs.
     """
 
+    stations_data = list(stations_data)
     if not stations_data:
-        return
+        return 0, 0
 
     start_time = time.time()
     chunk_size = _batch_size()
     updated    = 0
     inserted   = 0
+    own_bar    = bar is None
+    if stats is None:
+        stats = {"created": 0, "updated": 0}
+    if bar is None:
+        bar = _make_progress_bar(len(stations_data), "Check")
 
-    for station_chunk in _chunked(list(stations_data), chunk_size):
+    for station_chunk in _chunked(stations_data, chunk_size):
         desired = {
             station: process_period(station, from_date, to_date, job_config)
             for station, from_date, to_date in station_chunk
@@ -632,16 +908,26 @@ def update_series_job_windows(job_config: JobConfig, stations_data) -> None:
         for update_chunk in _chunked(updates, chunk_size):
             update_job_mappings(job_config, update_chunk)
         updated += len(updates)
+        stats["updated"] += len(updates)
 
         for job_chunk in _chunked(new_jobs, chunk_size):
             insert_jobs_bulk(job_chunk)
         inserted += len(new_jobs)
+        stats["created"] += len(new_jobs)
+
+        bar.update(len(station_chunk))
+        _set_plan_stats(bar, stats)
+
+    _set_plan_stats(bar, stats)
+    if own_bar:
+        bar.close()
 
     elapsed = time.time() - start_time
     _announce(
         f"Updated {updated} and inserted {inserted} jobs for {job_config} "
         f"in {elapsed:.2f} seconds"
     )
+    return updated, inserted
 
 
 def update_series_job(job_config: JobConfig) -> None:
@@ -691,13 +977,17 @@ def trigger_job(job_config: JobConfig, filters, total: int) -> None:
         )
     limiter = _limiter
     write_queue.maxsize = batch_size
+    _reset_request_errors()
 
     bar = _make_progress_bar(total, "Request")
     interactive = not bar.disable
 
     def refresh_stats(active_limiter, throttle=None):
         bar.set_postfix_str(_bar_stats(
-            bar, "Jobs", "job", limiter=active_limiter, throttle=throttle
+            bar, "Jobs", "job", limiter=active_limiter,
+            workers=workers if active_limiter is None else None,
+            errors=_request_error_count() if active_limiter is None else None,
+            throttle=throttle,
         ), refresh=True)
 
     refresh_stats(limiter)
@@ -717,6 +1007,12 @@ def trigger_job(job_config: JobConfig, filters, total: int) -> None:
             refresh_stats(limiter, remaining if throttled else None)
             last_stats = now
 
+    def finish(done):
+        for future in done:
+            _report_future(future)
+            bar.update(1)
+        tick(done)
+
     writer = Thread(target=db_writer, args=(interactive,), daemon=True)
     writer.start()
 
@@ -728,19 +1024,13 @@ def trigger_job(job_config: JobConfig, filters, total: int) -> None:
                 done, pending = wait(
                     pending, timeout=0.1, return_when=FIRST_COMPLETED
                 )
-                for future in done:
-                    _report_future(future)
-                    bar.update(1)
-                tick(done)
+                finish(done)
 
         while pending:
             done, pending = wait(
                 pending, timeout=0.1, return_when=FIRST_COMPLETED
             )
-            for future in done:
-                _report_future(future)
-                bar.update(1)
-            tick(done)
+            finish(done)
 
     _limiter = None
 
@@ -761,9 +1051,7 @@ def trigger_job(job_config: JobConfig, filters, total: int) -> None:
         for key in ("Pending", "Failed", "Invalid", "Completed")
     )
 
-    bar.set_postfix_str(_bar_stats(
-        bar, "Jobs", "job", limiter=limiter
-    ), refresh=True)
+    refresh_stats(limiter)
     bar.close()
     if interactive:
         print(f"\rRequest status: [{summary}]", file=sys.stderr)
@@ -779,7 +1067,7 @@ def _mark_failed(job: HidroJob, job_config: JobConfig) -> None:
 
     job.Status = JobConfig.Status.FAILED.value
     match job_config:
-        case JobConfig.Series():
+        case JobConfig.Series() | JobConfig.Telemetry():
             job.Retries += 1
 
 
@@ -824,7 +1112,7 @@ def _handle_http_error(job: HidroJob, job_config: JobConfig, e) -> bool:
 
     code = e.response.status_code if e.response is not None else None
     if code == 401:
-        logger.warning(f"[WORKER JOB {job.ID}]: Unauthorized, skipping.")
+        logger.verbose(f"[WORKER JOB {job.ID}]: Unauthorized, skipping.")
         return True
     if code == 429:
         _throttle()
@@ -852,11 +1140,11 @@ def _process_success(job: HidroJob, job_config: JobConfig, items):
         match job_config:
             case JobConfig.Base():
                 job.LastCheck = datetime.now()
-            case JobConfig.Series():
+            case JobConfig.Series() | JobConfig.Telemetry():
                 if items:
                     items = validate_series_items(job, job_config, items)
-                    if items:
-                        items = validate_series_items_date(job, job_config, items)
+                if items and isinstance(job_config, JobConfig.Series):
+                    items = validate_series_items_date(job, job_config, items)
     except Exception as e:
         logger.error(f"[WORKER JOB {job.ID}]: {e}, {items}, {type(items)}")
     return items
@@ -891,18 +1179,29 @@ def handle_job_request(job: HidroJob, job_config: JobConfig) -> None:
         if limiter is not None:
             limiter.success()
     except HTTPError as e:
+        _record_request_error()
         if _handle_http_error(job, job_config, e):
             return
+    except Timeout as e:
+        _record_request_error()
+        _throttle()
+        logger.verbose(
+            f"[WORKER JOB {job.ID}]: request timed out, retrying later. {e}"
+        )
+        return
     except RequestException as e:
+        _record_request_error()
         logger.trace(f"[WORKER JOB {job.ID}]: Request error, skipping. {e}")
         return
     except Exception as e:
+        _record_request_error()
         logger.error(f"[WORKER JOB {job.ID}]: unhandled error: {e}")
         _mark_failed(job, job_config)
     else:
         if success:
             items = _process_success(job, job_config, items)
         else:
+            _record_request_error()
             logger.trace(f"[WORKER JOB {job.ID}]: {job_config} request failed, marking job as FAILED")
             _mark_failed(job, job_config)
 
@@ -1070,40 +1369,27 @@ def write_data(job_config: JobConfig, jobs: List[HidroJob], items) -> float:
         if not isinstance(job_config, JobConfig.Base):
             filtered_items = filter_repeated_series_items(job_config, items)
 
-        match job_config:
-            case (JobConfig.Series.RAIN           | JobConfig.Series.DISCHARGE_SUMMARY |
-                  JobConfig.Series.FLOW_RATE      | JobConfig.Series.SEDIMENTS         |
-                  JobConfig.Series.STAGE          | JobConfig.Series.GRANULOMETRY      |
-                  JobConfig.Series.DISCHARGE_FLOW | JobConfig.Base()):
-                upsert_items(job_config, filtered_items)
-                _record_provenance(job_config, job_config, filtered_items)
+        upsert_items(job_config, filtered_items)
+        parent_ids = (get_registro_ids(str(job_config), filtered_items)
+                      if job_config == JobConfig.Series.CROSS_SECTION else None)
+        _record_provenance(job_config, job_config, filtered_items, parent_ids)
 
-            case JobConfig.Series.WATER_QUALITY:
-                upsert_items(job_config, filtered_items)
-                _record_provenance(job_config, job_config, filtered_items)
+        if job_config == JobConfig.Series.WATER_QUALITY:
+            status_items = _water_quality_status_items(filtered_items)
+            if status_items:
+                upsert_items(f'{job_config}Status', status_items)
+                _record_provenance(job_config, f'{job_config}Status', status_items)
 
-                status_items = _water_quality_status_items(filtered_items)
-                if status_items:
-                    upsert_items(f'{job_config}Status', status_items)
-                    _record_provenance(job_config, f'{job_config}Status', status_items)
-
-            case JobConfig.Series.CROSS_SECTION:
-                parent_items = filtered_items
-                upsert_items(job_config, parent_items)
-                parent_ids = get_registro_ids(str(job_config), parent_items)
-                _record_provenance(job_config, job_config, parent_items, parent_ids)
-
-                # Levels live in the raw items; parent rows are deduplicated.
-                vertical_items, vertical_entries = _vertical_cross_section_entries(
-                    items, parent_items, parent_ids)
-                if vertical_entries:
-                    inserted = insert_hidro(vertical_entries, expire=False)
-                    _record_provenance(
-                        job_config,
-                        "PerfilTransversalVert",
-                        vertical_items,
-                        [entry.RegistroID for entry in inserted],
-                    )
+        elif job_config == JobConfig.Series.CROSS_SECTION:
+            # Levels live in the raw items; parent rows are deduplicated.
+            vertical_items, vertical_entries = _vertical_cross_section_entries(
+                items, filtered_items, parent_ids)
+            if vertical_entries:
+                inserted = insert_hidro(vertical_entries, expire=False)
+                _record_provenance(
+                    job_config, "PerfilTransversalVert", vertical_items,
+                    [entry.RegistroID for entry in inserted],
+                )
 
     if jobs:
         update_jobs(jobs, job_config)
@@ -1214,17 +1500,14 @@ def run(config: Config):
 
     if CONFIG.SKIP_SERIES_JOBS:
         _announce(rule)
-        _announce("Skiping series jobs.")
+        _announce("Skiping series and telemetry jobs.")
         return
 
-    for job in JobConfig.Series:
+    for job in (*JobConfig.Series, *JobConfig.Telemetry):
         _announce(rule)
-        if job in CONFIG.SKIP_FOR:
+        if (job in CONFIG.SKIP_FOR or (len(CONFIG.RUN_FOR) > 0 and job not in CONFIG.RUN_FOR)):
             _announce(f"Skiping job for {job}.")
             continue
-        if len(CONFIG.RUN_FOR) > 0:
-            if job not in CONFIG.RUN_FOR:
-                _announce(f"Skiping job for {job}.")
-                continue
         _print_job_header(job)
-        check_series_job(job)
+        (check_telemetry_job if isinstance(job, JobConfig.Telemetry)
+         else check_series_job)(job)

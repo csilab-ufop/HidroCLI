@@ -94,6 +94,7 @@ HIDRO_ER = [
     ("Estacao", "QualAgua", "records"),
     ("Estacao", "Granulometria", "records"),
     ("Estacao", "PerfilTransversal", "records"),
+    ("Estacao", "Telemetria", "records"),
     ("QualAgua", "QualAguaStatus", "status flags"),
     ("PerfilTransversal", "PerfilTransversalVert", "verticals"),
 ]
@@ -456,6 +457,13 @@ SERIES = [
         "PerfilTransversalVert",
         "Vertical measurements within cross-section surveys.",
         "perfiltransversalvert-verticalcrosssection",
+    ),
+    (
+        "Telemetry",
+        "Telemetria",
+        "Telemetria",
+        "Telemetric measurements, including sensor, adopted, and displayed values with status flags.",
+        "telemetria-telemetry",
     ),
 ]
 
@@ -853,6 +861,12 @@ CLIENT_JOBS = [
         "SeriesJobs",
         "Jobs that request a station time-series window. Includes the shared `HidroJob` fields.",
         "seriesjobs",
+    ),
+    (
+        "TelemetryJobs",
+        "TelemetryJobs",
+        "Jobs that request one telemetric station search window. Includes the shared `HidroJob` fields.",
+        "telemetryjobs",
     ),
     (
         "JobRecords",

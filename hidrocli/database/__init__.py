@@ -30,14 +30,14 @@ from pathlib import Path
 from typing import NamedTuple
 
 from hidrocli.models.client import (
-    BaseJobs, StationJobs, SeriesJobs, HidroJob, Token, JobStatus,
-    BaseTables, SeriesTables,
+    BaseJobs, StationJobs, SeriesJobs, TelemetryJobs, HidroJob, Token, JobStatus,
+    BaseTables, SeriesTables, TelemetryTables,
 )
 from hidrocli.models.hidro import (
     HidroBase, Basin, SubBasin, Entity, Township, River, State, Station,
     Rain, DischargeMeasurement, Sediments, Stage, RatingCurve,
     WaterQuality, WaterQualityStatus, Granulometry, CrossSection,
-    VerticalCrossSection, FlowRate,
+    VerticalCrossSection, FlowRate, Telemetry,
 )
 
 class DatabaseType(StrEnum):
@@ -110,8 +110,9 @@ _HIDRO_BY_TABLE = {
 }
 
 
-_BASE_NAMES   = {table.value for table in BaseTables}
-_SERIES_NAMES = {table.value for table in SeriesTables}
+_BASE_NAMES      = {table.value for table in BaseTables}
+_SERIES_NAMES    = {table.value for table in SeriesTables}
+_TELEMETRY_NAMES = {table.value for table in TelemetryTables}
 
 def get_hidro_model(name: str):
     """Return the Hidro ORM model for a job/table name."""
@@ -126,6 +127,8 @@ def get_job_model(name: str):
         return BaseJobs
     if name in _SERIES_NAMES:
         return SeriesJobs
+    if name in _TELEMETRY_NAMES:
+        return TelemetryJobs
     return None
 
 

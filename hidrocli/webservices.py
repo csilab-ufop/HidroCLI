@@ -47,7 +47,8 @@ _DATA_ENDPOINTS_MAP = {
     "Cotas":             "/EstacoesTelemetricas/HidroSerieCotas/v1",
     "Granulometria":     "/EstacoesTelemetricas/HidroSerieGranulometria/v1",
     "PerfilTransversal": "/EstacoesTelemetricas/HidroSeriePerfilTransversal/v1",
-    "Vazoes":            "/EstacoesTelemetricas/HidroSerieVazao/v1"
+    "Vazoes":            "/EstacoesTelemetricas/HidroSerieVazao/v1",
+    "Telemetria":        "/EstacoesTelemetricas/HidroinfoanaSerieTelemetricaDetalhada/v1"
 }
 
 _BASE_JOBS = {"Bacia", "SubBacia", "Entidade", "Municipio", "Rio", "Estado"}
@@ -67,15 +68,22 @@ def _request_hidro_ws(endpoint, headers, params={}):
     try:
         response = requests.get(f"{url}{endpoint}", headers=headers, params=params, timeout=300)
     except requests.exceptions.RequestException as e:
-        match type(e).__name__:
-            case "SSLError" | "ConnectionError":
-                logger.trace(
-                    f"[REQUEST]: {type(e).__name__} for {endpoint}, params: {params}: {e}"
-                )
-            case _:
-                logger.error(
-                    f"[REQUEST]: unhandled {type(e).__name__} for {endpoint}, params: {params}: {e}"
-                )
+        if isinstance(e, requests.exceptions.Timeout):
+            logger.verbose(
+                f"[REQUEST]: timeout {type(e).__name__} for {endpoint}, "
+                f"params: {params}: {e}"
+            )
+        elif isinstance(e, (requests.exceptions.SSLError,
+                            requests.exceptions.ConnectionError)):
+            logger.trace(
+                f"[REQUEST]: {type(e).__name__} for {endpoint}, "
+                f"params: {params}: {e}"
+            )
+        else:
+            logger.error(
+                f"[REQUEST]: unhandled {type(e).__name__} for {endpoint}, "
+                f"params: {params}: {e}"
+            )
         raise
     if response.ok:
         try:
@@ -175,8 +183,16 @@ def _json_file_path(job_name: str, params: dict, json_dir: str) -> str:
     - base jobs: ``<dir>/<Job>.json``
     - ``Estacao``: ``<dir>/Estacao/Estacao_<UF>.json``
     - series jobs: ``<dir>/<Job>/station_<code>_<start>_<end>.json``
+    - telemetry: ``<dir>/Telemetria/station_<code>_<date>_<range>.json``
     """
 
+    if job_name == "Telemetria":
+        station = params["Código da Estação"]
+        date    = params["Data de Busca (yyyy-MM-dd)"]
+        range_  = params["Range Intervalo de busca"]
+        return os.path.join(
+            json_dir, job_name, f"station_{station}_{date}_{range_}.json"
+        )
     if job_name == "Estacao":
         uf = params["Unidade Federativa"]
         return os.path.join(json_dir, job_name, f"{job_name}_{uf}.json")

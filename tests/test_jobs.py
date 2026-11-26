@@ -26,9 +26,12 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 import io
+import logging
 import time
 
 from datetime import datetime, timedelta
+
+from requests.exceptions import ReadTimeout
 
 import hidrocli.jobs.runner
 from hidrocli.config import setup_logger
@@ -336,6 +339,105 @@ def test_progress_renders_bar_stats_and_throttle(monkeypatch):
     assert "throttle 1.0s" in output
 
 
+def test_bar_stats_shows_updated_and_static_workers():
+    bar = MagicMock()
+    bar.format_dict = {
+        "n": 1, "total": 1, "elapsed": 0, "rate": None,
+    }
+
+    text = hidrocli.jobs.runner._bar_stats(
+        bar, "Stations", "station", created=2, updated=3, workers=4, errors=2,
+    )
+
+    assert "jobs created: 2" in text
+    assert "jobs updated: 3" in text
+    assert "Workers: 4/4" in text
+    assert "errors 2" in text
+
+
+@patch('hidrocli.jobs.runner.count_job_by_status', return_value=[])
+@patch('hidrocli.jobs.runner.write_queue')
+@patch('hidrocli.jobs.runner.db_writer')
+@patch('hidrocli.jobs.runner._bar_stats', return_value="")
+@patch('hidrocli.jobs.runner._AdaptiveLimiter')
+@patch('hidrocli.jobs.runner._make_progress_bar')
+@patch('hidrocli.jobs.runner.handle_job_request')
+@patch('hidrocli.jobs.runner.iter_jobs')
+def test_trigger_job_read_json_shows_static_workers(
+        mock_iter, mock_handle, mock_bar_factory, mock_limiter_cls,
+        mock_stats, mock_writer, mock_queue, mock_count, monkeypatch):
+    mock_iter.return_value = iter([MagicMock(ID=index) for index in range(4)])
+    bar = mock_bar_factory.return_value
+    bar.disable = True
+    monkeypatch.setattr(hidrocli.jobs.runner, "_thread_limit", lambda: 8)
+    _set_config(monkeypatch, MAX_WORKERS=4, BATCH_SIZE=5, READ_JSON=True)
+
+    hidrocli.jobs.runner.trigger_job(
+        hidrocli.jobs.runner.JobConfig.Series.RAIN, [], 4
+    )
+
+    mock_limiter_cls.assert_not_called()
+    assert mock_stats.call_args.kwargs["limiter"] is None
+    assert mock_stats.call_args.kwargs["workers"] == 4
+    assert mock_stats.call_args.kwargs["errors"] == 0
+    for call in mock_stats.call_args_list:
+        assert call.kwargs["limiter"] is None
+        assert call.kwargs["workers"] == 4
+        assert call.kwargs["errors"] == 0
+
+
+@patch('hidrocli.jobs.runner.trigger_jobs')
+@patch('hidrocli.jobs.runner.update_series_job')
+@patch('hidrocli.jobs.runner.update_series_job_windows')
+@patch('hidrocli.jobs.runner.create_series_jobs')
+@patch('hidrocli.jobs.runner.get_station_ids', return_value={2})
+@patch('hidrocli.jobs.runner.get_period')
+def test_check_series_job_unifies_created_and_updated_counts(
+        mock_period, mock_station_ids, mock_create, mock_update_windows,
+        mock_update, mock_trigger, monkeypatch):
+    mock_period.return_value.all.return_value = [
+        (1, datetime(2000, 1, 1), datetime(2010, 1, 1)),
+        (2, datetime(2001, 1, 1), datetime(2011, 1, 1)),
+    ]
+    _set_config(
+        monkeypatch,
+        STATIONS=[], INITIAL_DATE=datetime(2005, 1, 1),
+        FINAL_DATE=datetime(2008, 1, 1),
+    )
+
+    def fake_create(rows, job_config, bar=None, stats=None):
+        stats["created"] += len(rows)
+        return len(rows)
+
+    def fake_update(job_config, rows, bar=None, stats=None):
+        stats["updated"] += 2
+        return 2, 0
+
+    mock_create.side_effect = fake_create
+    mock_update_windows.side_effect = fake_update
+
+    descs = []
+    stats_calls = []
+    bar = MagicMock()
+    monkeypatch.setattr(
+        hidrocli.jobs.runner, "_make_progress_bar",
+        lambda total, desc: descs.append(desc) or bar,
+    )
+    monkeypatch.setattr(
+        hidrocli.jobs.runner, "_bar_stats",
+        lambda *args, **kwargs: stats_calls.append(kwargs) or "",
+    )
+
+    hidrocli.jobs.runner.check_series_job(
+        hidrocli.jobs.runner.JobConfig.Series.RAIN
+    )
+
+    assert descs == ["Check"]
+    assert stats_calls[-1]["created"] == 1
+    assert stats_calls[-1]["updated"] == 2
+    bar.close.assert_called_once()
+
+
 @patch('hidrocli.jobs.runner.write_queue')
 @patch('hidrocli.jobs.runner.request_job_data')
 @patch('hidrocli.jobs.runner.get_token')
@@ -444,6 +546,101 @@ def test_handle_job_request_skips_on_request_error(mock_token, mock_request,
     assert job.Status  == hidrocli.jobs.runner.JobConfig.Status.PENDING.value
     assert job.Retries == 0
     mock_queue.put.assert_not_called()
+
+
+@patch('hidrocli.jobs.runner._throttle')
+@patch('hidrocli.jobs.runner.write_queue')
+@patch('hidrocli.jobs.runner.request_job_data',
+       side_effect=ReadTimeout("read timed out"))
+@patch('hidrocli.jobs.runner.get_token', return_value="token")
+def test_handle_job_request_skips_and_throttles_on_timeout(
+        mock_token, mock_request, mock_queue, mock_throttle):
+    """A timeout leaves the job PENDING, keeps retries, and throttles the pool."""
+
+    config = hidrocli.jobs.runner.JobConfig.Telemetry.TELEMETRY
+    job    = MagicMock()
+    job.ID        = 42
+    job.Status    = hidrocli.jobs.runner.JobConfig.Status.PENDING.value
+    job.Retries   = 0
+    job.to_params.return_value = {}
+
+    hidrocli.jobs.runner.handle_job_request(job, config)
+
+    assert job.Status  == hidrocli.jobs.runner.JobConfig.Status.PENDING.value
+    assert job.Retries == 0
+    mock_queue.put.assert_not_called()
+    mock_throttle.assert_called_once()
+
+
+@patch('hidrocli.jobs.runner._throttle')
+@patch('hidrocli.jobs.runner.write_queue')
+@patch('hidrocli.jobs.runner.request_job_data',
+       side_effect=ReadTimeout("read timed out"))
+@patch('hidrocli.jobs.runner.get_token', return_value="token")
+def test_handle_job_request_counts_read_json_timeout(
+        mock_token, mock_request, mock_queue, mock_throttle, monkeypatch):
+    """A timed-out cache fallback increments the read-json error counter."""
+
+    _set_config(monkeypatch, READ_JSON=True)
+    hidrocli.jobs.runner._reset_request_errors()
+    job = MagicMock()
+    job.ID      = 42
+    job.Status  = hidrocli.jobs.runner.JobConfig.Status.PENDING.value
+    job.Retries = 0
+    job.to_params.return_value = {}
+
+    hidrocli.jobs.runner.handle_job_request(
+        job, hidrocli.jobs.runner.JobConfig.Telemetry.TELEMETRY
+    )
+
+    assert hidrocli.jobs.runner._request_error_count() == 1
+    assert job.Status == hidrocli.jobs.runner.JobConfig.Status.PENDING.value
+    assert job.Retries == 0
+
+
+@patch('hidrocli.jobs.runner.write_queue')
+@patch('hidrocli.jobs.runner.request_job_data', return_value=(False, []))
+@patch('hidrocli.jobs.runner.get_token', return_value="token")
+def test_handle_job_request_counts_read_json_failed_request(
+        mock_token, mock_request, mock_queue, monkeypatch):
+    """A failed cache-miss API request increments the read-json error counter."""
+
+    _set_config(monkeypatch, READ_JSON=True)
+    hidrocli.jobs.runner._reset_request_errors()
+    job = MagicMock()
+    job.ID      = 42
+    job.Status  = hidrocli.jobs.runner.JobConfig.Status.PENDING.value
+    job.Retries = 0
+    job.to_params.return_value = {}
+
+    hidrocli.jobs.runner.handle_job_request(
+        job, hidrocli.jobs.runner.JobConfig.Telemetry.TELEMETRY
+    )
+
+    assert hidrocli.jobs.runner._request_error_count() == 1
+
+
+@patch('hidrocli.jobs.runner._throttle')
+@patch('hidrocli.jobs.runner.write_queue')
+@patch('hidrocli.jobs.runner.request_job_data', side_effect=_http_error(500))
+@patch('hidrocli.jobs.runner.get_token', return_value="token")
+def test_handle_job_request_counts_read_json_http_error(
+        mock_token, mock_request, mock_queue, mock_throttle, monkeypatch):
+    """Any HTTP failure from a cache fallback counts in read-json mode."""
+
+    _set_config(monkeypatch, READ_JSON=True)
+    hidrocli.jobs.runner._reset_request_errors()
+    job = MagicMock()
+    job.ID      = 42
+    job.Status  = hidrocli.jobs.runner.JobConfig.Status.PENDING.value
+    job.Retries = 0
+    job.to_params.return_value = {}
+
+    hidrocli.jobs.runner.handle_job_request(
+        job, hidrocli.jobs.runner.JobConfig.Telemetry.TELEMETRY
+    )
+
+    assert hidrocli.jobs.runner._request_error_count() == 1
 
 
 @patch('hidrocli.jobs.runner._throttle')
@@ -682,10 +879,11 @@ def test_check_series_job_warns_for_unknown_station(
 @patch('hidrocli.jobs.runner.create_job_filters', return_value=[])
 @patch('hidrocli.jobs.runner.trigger_job')
 @patch('hidrocli.jobs.runner.count_job', side_effect=[2, 0])
-def test_trigger_series_jobs_retries_until_none(mock_count, mock_trigger,
-                                                mock_filters):
-    hidrocli.jobs.runner.trigger_series_jobs(
-        hidrocli.jobs.runner.JobConfig.Series.RAIN
+def test_trigger_jobs_retries_until_none(mock_count, mock_trigger,
+                                         mock_filters):
+    hidrocli.jobs.runner.trigger_jobs(
+        hidrocli.jobs.runner.JobConfig.Series.RAIN,
+        hidrocli.jobs.runner.SERIES_RETRY_DEPTH,
     )
 
     assert mock_count.call_count == 2
@@ -697,6 +895,23 @@ def test_trigger_series_jobs_retries_until_none(mock_count, mock_trigger,
         hidrocli.jobs.runner.JobConfig.Status.PENDING.value,
     ]
     assert mock_filters.call_args.kwargs["max_retries"] is True
+
+
+@patch('hidrocli.jobs.runner.create_job_filters', return_value=[])
+@patch('hidrocli.jobs.runner.trigger_job')
+@patch('hidrocli.jobs.runner.count_job', return_value=1)
+def test_trigger_jobs_stops_at_retry_depth(mock_count, mock_trigger,
+                                           mock_filters, caplog):
+    """Persistent pending jobs stop after the configured same-run retries."""
+
+    with caplog.at_level(logging.WARNING):
+        hidrocli.jobs.runner.trigger_jobs(
+            hidrocli.jobs.runner.JobConfig.Series.RAIN,
+            hidrocli.jobs.runner.SERIES_RETRY_DEPTH,
+        )
+
+    assert mock_trigger.call_count == 1 + hidrocli.jobs.runner.SERIES_RETRY_DEPTH
+    assert "remain pending/failed after" in caplog.text
 
 
 def test_process_period_creates_yearly_windows():
@@ -816,7 +1031,7 @@ def test_update_series_job_windows_inserts_missing_year(
     assert inserted.Status == hidrocli.jobs.runner.JobConfig.Status.PENDING.value
 
 
-@patch('hidrocli.jobs.runner.trigger_series_jobs')
+@patch('hidrocli.jobs.runner.trigger_jobs')
 @patch('hidrocli.jobs.runner.update_series_job')
 @patch('hidrocli.jobs.runner.update_series_job_windows')
 @patch('hidrocli.jobs.runner.create_series_jobs')
@@ -842,15 +1057,19 @@ def test_check_series_job_applies_date_overrides(
     mock_create.assert_called_once()
     created = mock_create.call_args.args[0]
     assert created == [(1, datetime(2005, 1, 1), datetime(2008, 1, 1))]
-    mock_update_windows.assert_called_once_with(
+    mock_update_windows.assert_called_once()
+    assert mock_update_windows.call_args.args == (
         hidrocli.jobs.runner.JobConfig.Series.RAIN,
         [(2, datetime(2005, 1, 1), datetime(2008, 1, 1))],
     )
+    assert mock_update_windows.call_args.kwargs["stats"] == {
+        "created": 0, "updated": 0,
+    }
     mock_update.assert_not_called()
     mock_trigger.assert_called_once()
 
 
-@patch('hidrocli.jobs.runner.trigger_series_jobs')
+@patch('hidrocli.jobs.runner.trigger_jobs')
 @patch('hidrocli.jobs.runner.update_series_job')
 @patch('hidrocli.jobs.runner.update_series_job_windows')
 @patch('hidrocli.jobs.runner.create_series_jobs')
@@ -879,13 +1098,13 @@ def test_check_series_job_keeps_stale_reset_without_final_date(
 @patch('hidrocli.jobs.runner.create_job_filters', return_value=[])
 @patch('hidrocli.jobs.runner.trigger_job')
 @patch('hidrocli.jobs.runner.count_job', return_value=0)
-def test_trigger_series_jobs_passes_date_bounds(
+def test_trigger_jobs_passes_date_bounds(
         mock_count, mock_trigger, mock_filters, monkeypatch):
     initial = datetime(2020, 1, 1)
     final   = datetime(2021, 1, 1)
     _set_config(monkeypatch, INITIAL_DATE=initial, FINAL_DATE=final)
 
-    hidrocli.jobs.runner.trigger_series_jobs(
+    hidrocli.jobs.runner.trigger_jobs(
         hidrocli.jobs.runner.JobConfig.Series.RAIN
     )
 

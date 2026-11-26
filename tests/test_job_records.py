@@ -37,7 +37,7 @@ from hidrocli.jobs.runner import (
 )
 from hidrocli.models.client import ClientBase, JobRecords
 from hidrocli.models.hidro import (
-    Basin, CrossSection, HidroBase, Rain, VerticalCrossSection,
+    Basin, CrossSection, HidroBase, Rain, Telemetry, VerticalCrossSection,
     WaterQuality, WaterQualityStatus,
 )
 
@@ -396,3 +396,37 @@ def test_filter_repeated_discharge_summary_ignores_job_tag():
         JobConfig.Series.DISCHARGE_SUMMARY, normalize_items("ResumoDescarga", items))
 
     assert len(filtered) == 1
+
+
+def test_write_data_records_telemetry_provenance(
+        hidro_db, client_db, trace_records):
+    item = {
+        "codigoestacao":    1,
+        "Data_Hora_Medicao": datetime(2024, 1, 1),
+        "Bateria":          12.6,
+        "_JobID":           11,
+    }
+
+    write_data(
+        JobConfig.Telemetry.TELEMETRY, [],
+        normalize_items("Telemetria", [dict(item)]),
+    )
+
+    hidro_session = hidro_db.get_session()
+    try:
+        telemetry = hidro_session.query(Telemetry).one()
+        telemetry_id = telemetry.RegistroID
+        assert telemetry.EstacaoCodigo == 1
+        assert telemetry.Bateria == 12.6
+    finally:
+        hidro_session.close()
+
+    session = client_db.get_session()
+    try:
+        record = session.query(JobRecords).one()
+        assert record.JobID == 11
+        assert record.JobName == "Telemetria"
+        assert record.DataTable == "Telemetria"
+        assert record.DataID == telemetry_id
+    finally:
+        session.close()

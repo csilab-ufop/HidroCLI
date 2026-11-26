@@ -57,5 +57,44 @@ def test_base_and_station_jobs_ignore_filter():
     }
 
 
+def _telemetry_job():
+    return TelemetryJobs(
+        HidroTable="Telemetria",
+        StationID=12345,
+        Date=datetime(2024, 5, 28),
+        Range="DIAS_30",
+        Status=1,
+    )
+
+
+def test_telemetry_jobs_params():
+    params = _telemetry_job().to_params("DATA_LEITURA")
+
+    assert params == {
+        "Código da Estação":          12345,
+        "Tipo Filtro Data":           "DATA_LEITURA",
+        "Data de Busca (yyyy-MM-dd)": "2024-05-28",
+        "Range Intervalo de busca":   "DIAS_30",
+    }
+
+
+def test_telemetry_jobs_iterates_all_fields():
+    job = _telemetry_job()
+    job.ID = 7
+    job.Retries = 2
+
+    fields = dict(job)
+
+    assert fields == {
+        "ID":         7,
+        "HidroTable": "Telemetria",
+        "Status":     1,
+        "StationID":  12345,
+        "Date":       datetime(2024, 5, 28),
+        "Range":      "DIAS_30",
+        "Retries":    2,
+    }
+
+
 def test_dummy():
     assert True

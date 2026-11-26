@@ -1889,3 +1889,90 @@ class FlowRate(HidroBaseModel):
     for i in range(1, 32):
         locals()[f'Vazao{i:02d}'] = Column(f'Vazao{i:02d}', Float, info={"ana": f"Vazao_{i:02d}"})
         locals()[f'Vazao{i:02d}Status'] = Column(f'Vazao{i:02d}Status', SmallInteger, info={"ana": f"Vazao_{i:02d}_Status"})
+
+
+class Telemetry(HidroBaseModel):
+    """ Database model for storing telemetric series data.
+
+    The detailed endpoint is the superset of the adopted endpoint, so both
+    payloads share this table. Adopted-only records leave the detailed-only
+    columns null.
+    """
+
+    __tablename__ = 'Telemetria'
+    __table_args__ = (
+        UniqueConstraint(
+            'EstacaoCodigo',
+            'Data_Hora_Medicao',
+            name='uq_telemetry',
+        ),
+    )
+
+    EstacaoCodigo              = Column(BigInteger, info={"ana": "codigoestacao"})
+    """int: station code identifier of the record."""
+
+    Data_Hora_Medicao          = Column(DateTime, info={"ana": "Data_Hora_Medicao"})
+    """datetime: date and time of the measurement."""
+
+    Data_Atualizacao           = Column(DateTime, info={"ana": "Data_Atualizacao"})
+    """datetime: date and time the measurement was last updated."""
+
+    Bateria                    = Column(Float, info={"ana": "Bateria"})
+    """float: battery voltage."""
+
+    Chuva_Acumulada            = Column(Float, info={"ana": "Chuva_Acumulada"})
+    """float: accumulated rainfall (mm)."""
+
+    Chuva_Acumulada_Status     = Column(SmallInteger, info={"ana": "Chuva_Acumulada_Status"})
+    """int: availability/reliability status of accumulated rainfall."""
+
+    Chuva_Adotada              = Column(Float, info={"ana": "Chuva_Adotada"})
+    """float: adopted rainfall (mm)."""
+
+    Chuva_Adotada_Status       = Column(SmallInteger, info={"ana": "Chuva_Adotada_Status"})
+    """int: availability/reliability status of adopted rainfall."""
+
+    Cota_Adotada               = Column(Float, info={"ana": "Cota_Adotada"})
+    """float: adopted stage (cm)."""
+
+    Cota_Adotada_Status        = Column(SmallInteger, info={"ana": "Cota_Adotada_Status"})
+    """int: availability/reliability status of adopted stage."""
+
+    Cota_Display               = Column(Float, info={"ana": "Cota_Display"})
+    """float: displayed stage (cm)."""
+
+    Cota_Display_Status        = Column(SmallInteger, info={"ana": "Cota_Display_Status"})
+    """int: availability/reliability status of displayed stage."""
+
+    Cota_Manual                = Column(Float, info={"ana": "Cota_Manual"})
+    """float: manual stage (cm)."""
+
+    Cota_Manual_Status         = Column(SmallInteger, info={"ana": "Cota_Manual_Status"})
+    """int: availability/reliability status of manual stage."""
+
+    Cota_Sensor                = Column(Float, info={"ana": "Cota_Sensor"})
+    """float: stage measured by the sensor (cm)."""
+
+    Cota_Sensor_Status         = Column(SmallInteger, info={"ana": "Cota_Sensor_Status"})
+    """int: availability/reliability status of sensor stage."""
+
+    Pressao_Atmosferica        = Column(Float, info={"ana": "Pressao_Atmosferica"})
+    """float: atmospheric pressure."""
+
+    Pressao_Atmosferica_Status = Column(SmallInteger, info={"ana": "Pressao_Atmosferica_Status"})
+    """int: availability/reliability status of atmospheric pressure."""
+
+    Temperatura_Agua           = Column(Float, info={"ana": "Temperatura_Agua"})
+    """float: water temperature."""
+
+    Temperatura_Agua_Status    = Column(SmallInteger, info={"ana": "Temperatura_Agua_Status"})
+    """int: availability/reliability status of water temperature."""
+
+    Temperatura_Interna        = Column(Float, info={"ana": "Temperatura_Interna"})
+    """float: internal temperature."""
+
+    Vazao_Adotada              = Column(Float, info={"ana": "Vazao_Adotada"})
+    """float: adopted flow rate (m3/s)."""
+
+    Vazao_Adotada_Status       = Column(SmallInteger, info={"ana": "Vazao_Adotada_Status"})
+    """int: availability/reliability status of adopted flow rate."""

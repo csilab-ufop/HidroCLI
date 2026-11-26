@@ -101,20 +101,20 @@ def parse_config(argv=None):
                         help='Set logging level (NONE disables all logging)')
 
     parser.add_argument('--skip-series-jobs', action='store_true', default=False,
-                        help='Skip all series jobs when present')
+                        help='Skip all series and telemetry jobs when present')
 
-    from hidrocli.jobs import series_job_names
+    from hidrocli.jobs import selectable_job_names
 
     parser.add_argument('--skip-for', default=[], nargs='*',
-                        choices=series_job_names(),
+                        choices=selectable_job_names(),
                         help='Skip job creation and requesition for the given choices')
 
     parser.add_argument('--run-for', default=[], nargs='*',
-                        choices=series_job_names(),
+                        choices=selectable_job_names(),
                         help='Runs only the choosen Jobs')
 
     parser.add_argument('--stations', default=[], nargs='*', type=int,
-                        help='Station codes to filter series jobs')
+                        help='Station codes to filter series and telemetry jobs')
 
     from hidrocli.models.client import FILTERS
 
@@ -124,11 +124,11 @@ def parse_config(argv=None):
 
     parser.add_argument('--initial-date', type=_parse_date, default=None,
                         metavar='YYYY-MM-DD',
-                        help='Initial date for series jobs; defaults to each station period start')
+                        help='Initial date for series and telemetry jobs; defaults to each station period start')
 
     parser.add_argument('--final-date', type=_parse_date, default=None,
                         metavar='YYYY-MM-DD',
-                        help='Final date for series jobs; defaults to each station period end')
+                        help='Final date for series and telemetry jobs; defaults to each station period end')
 
     parser.add_argument('--save-json', action='store_true', default=False,
                         help='Save raw JSON payloads retrieved from the API')

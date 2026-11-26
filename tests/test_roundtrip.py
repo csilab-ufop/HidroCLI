@@ -53,7 +53,11 @@ from hidrocli.models.hidro import HidroBase
 
 setup_logger()
 
-ALL_JOBS = list(JobConfig.Base) + list(JobConfig.Series)
+ALL_JOBS = (
+    list(JobConfig.Base)
+    + list(JobConfig.Series)
+    + list(JobConfig.Telemetry)
+)
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
@@ -97,6 +101,8 @@ def run_transform(name, items):
         job = fake_job()
         items = validate_series_items(job, name, items)
         items = validate_series_items_date(job, name, items)
+    elif isinstance(name, JobConfig.Telemetry):
+        items = validate_series_items(fake_job(), name, items)
     return items
 
 

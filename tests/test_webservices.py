@@ -87,6 +87,23 @@ def test_request_hidro_ws_timeout_raises(mock_get):
         _request_hidro_ws("/endpoint", {})
 
 
+@patch('hidrocli.webservices.logger')
+@patch('hidrocli.webservices.requests.get')
+def test_request_hidro_ws_timeout_logs_verbose(mock_get, mock_logger):
+    """A timeout is an expected transient condition, not an ERROR."""
+
+    mock_get.side_effect = requests.exceptions.ReadTimeout("read timed out")
+
+    with pytest.raises(requests.exceptions.ReadTimeout):
+        _request_hidro_ws("/endpoint", {})
+
+    assert any(
+        "timeout ReadTimeout" in str(call)
+        for call in mock_logger.verbose.call_args_list
+    )
+    mock_logger.error.assert_not_called()
+
+
 @patch('hidrocli.webservices.requests.get')
 def test_request_hidro_ws_connection_error_raises(mock_get):
     """Test that a connection error is logged and re-raised."""
@@ -369,3 +386,44 @@ def test_request_job_data_save_failure_keeps_data(mock_request,
     assert success is True
     assert result == items
     mock_save_response.assert_called_once()
+
+
+TELEMETRY_PARAMS = {
+    "Código da Estação":          12345,
+    "Tipo Filtro Data":           "DATA_LEITURA",
+    "Data de Busca (yyyy-MM-dd)": "2024-05-28",
+    "Range Intervalo de busca":   "DIAS_30",
+}
+
+
+def test_json_file_path_telemetry():
+    assert _json_file_path("Telemetria", TELEMETRY_PARAMS, "json") == os.path.join(
+        "json", "Telemetria", "station_12345_2024-05-28_DIAS_30.json"
+    )
+
+
+@patch('hidrocli.webservices._request_hidro_ws')
+def test_request_job_data_saves_telemetry_json(mock_request, tmp_path):
+    items = [{"codigoestacao": "12345", "Data_Hora_Medicao": "2024-05-28"}]
+    mock_request.return_value = {"items": items}
+
+    success, result = request_job_data(
+        "Telemetria", "token", TELEMETRY_PARAMS,
+        save_json=True, json_dir=str(tmp_path),
+    )
+
+    assert success is True
+    assert result == items
+    path = (
+        tmp_path / "Telemetria"
+        / "station_12345_2024-05-28_DIAS_30.json"
+    )
+    assert json.loads(path.read_text()) == items
+
+
+def test_telemetry_endpoint_is_registered():
+    from hidrocli.webservices import _DATA_ENDPOINTS_MAP
+
+    assert _DATA_ENDPOINTS_MAP["Telemetria"] == (
+        "/EstacoesTelemetricas/HidroinfoanaSerieTelemetricaDetalhada/v1"
+    )
