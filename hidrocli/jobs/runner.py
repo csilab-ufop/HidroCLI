@@ -1505,8 +1505,7 @@ def run(config: Config):
 
     for job in (*JobConfig.Series, *JobConfig.Telemetry):
         _announce(rule)
-        if (job in CONFIG.SKIP_FOR or
-                (len(CONFIG.RUN_FOR) > 0 and job not in CONFIG.RUN_FOR)):
+        if (job in CONFIG.SKIP_FOR or (len(CONFIG.RUN_FOR) > 0 and job not in CONFIG.RUN_FOR)):
             _announce(f"Skiping job for {job}.")
             continue
         _print_job_header(job)
