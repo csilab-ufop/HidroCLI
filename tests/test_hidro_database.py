@@ -206,3 +206,37 @@ def test_upsert_items_inserts_new_and_updates_existing(hidro_db):
         assert session.query(Rain).count() == 2
     finally:
         session.close()
+
+
+def test_get_telemetry_stations_filters_by_code(hidro_db):
+    insert_hidro([
+        Station(
+            Codigo=1,
+            PeriodoTelemetricaInicio=datetime(2024, 1, 1),
+            PeriodoTelemetricaFim=datetime(2024, 2, 1),
+        ),
+        Station(
+            Codigo=2,
+            PeriodoTelemetricaInicio=datetime(2024, 3, 1),
+            PeriodoTelemetricaFim=None,
+        ),
+        Station(Codigo=3, PeriodoTelemetricaInicio=None),
+    ])
+
+    rows = get_telemetry_stations([2, 3])
+
+    assert [(row[0], row[1], row[2]) for row in rows] == [
+        (2, datetime(2024, 3, 1), None),
+    ]
+
+
+def test_get_telemetry_stations_returns_all_with_period(hidro_db):
+    insert_hidro([
+        Station(Codigo=1, PeriodoTelemetricaInicio=datetime(2024, 1, 1)),
+        Station(Codigo=2, PeriodoTelemetricaInicio=datetime(2024, 2, 1)),
+        Station(Codigo=3, PeriodoTelemetricaInicio=None),
+    ])
+
+    rows = get_telemetry_stations()
+
+    assert [row[0] for row in rows] == [1, 2]

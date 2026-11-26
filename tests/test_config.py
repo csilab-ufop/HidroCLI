@@ -89,6 +89,14 @@ def test_parse_config_trace_records_flag():
     assert cfg.TRACE_RECORDS is True
 
 
+def test_parse_config_selection_includes_telemetry():
+    cfg = parse_config(['--run-for', 'Telemetria', 'Chuvas'])
+    assert cfg.RUN_FOR == ('Telemetria', 'Chuvas')
+
+    cfg = parse_config(['--skip-for', 'Telemetria'])
+    assert cfg.SKIP_FOR == ('Telemetria',)
+
+
 def test_parse_config_accepts_none_log_level():
     cfg = parse_config(['--log-level', 'NONE'])
     assert cfg.LOG_LEVEL == 'NONE'

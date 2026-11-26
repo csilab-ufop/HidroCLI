@@ -47,7 +47,8 @@ _DATA_ENDPOINTS_MAP = {
     "Cotas":             "/EstacoesTelemetricas/HidroSerieCotas/v1",
     "Granulometria":     "/EstacoesTelemetricas/HidroSerieGranulometria/v1",
     "PerfilTransversal": "/EstacoesTelemetricas/HidroSeriePerfilTransversal/v1",
-    "Vazoes":            "/EstacoesTelemetricas/HidroSerieVazao/v1"
+    "Vazoes":            "/EstacoesTelemetricas/HidroSerieVazao/v1",
+    "Telemetria":        "/EstacoesTelemetricas/HidroinfoanaSerieTelemetricaDetalhada/v1"
 }
 
 _BASE_JOBS = {"Bacia", "SubBacia", "Entidade", "Municipio", "Rio", "Estado"}
@@ -175,8 +176,16 @@ def _json_file_path(job_name: str, params: dict, json_dir: str) -> str:
     - base jobs: ``<dir>/<Job>.json``
     - ``Estacao``: ``<dir>/Estacao/Estacao_<UF>.json``
     - series jobs: ``<dir>/<Job>/station_<code>_<start>_<end>.json``
+    - telemetry: ``<dir>/Telemetria/station_<code>_<date>_<range>.json``
     """
 
+    if job_name == "Telemetria":
+        station = params["Código da Estação"]
+        date    = params["Data de Busca (yyyy-MM-dd)"]
+        range_  = params["Range Intervalo de busca"]
+        return os.path.join(
+            json_dir, job_name, f"station_{station}_{date}_{range_}.json"
+        )
     if job_name == "Estacao":
         uf = params["Unidade Federativa"]
         return os.path.join(json_dir, job_name, f"{job_name}_{uf}.json")

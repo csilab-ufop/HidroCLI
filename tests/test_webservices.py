@@ -369,3 +369,44 @@ def test_request_job_data_save_failure_keeps_data(mock_request,
     assert success is True
     assert result == items
     mock_save_response.assert_called_once()
+
+
+TELEMETRY_PARAMS = {
+    "Código da Estação":          12345,
+    "Tipo Filtro Data":           "DATA_LEITURA",
+    "Data de Busca (yyyy-MM-dd)": "2024-05-28",
+    "Range Intervalo de busca":   "DIAS_30",
+}
+
+
+def test_json_file_path_telemetry():
+    assert _json_file_path("Telemetria", TELEMETRY_PARAMS, "json") == os.path.join(
+        "json", "Telemetria", "station_12345_2024-05-28_DIAS_30.json"
+    )
+
+
+@patch('hidrocli.webservices._request_hidro_ws')
+def test_request_job_data_saves_telemetry_json(mock_request, tmp_path):
+    items = [{"codigoestacao": "12345", "Data_Hora_Medicao": "2024-05-28"}]
+    mock_request.return_value = {"items": items}
+
+    success, result = request_job_data(
+        "Telemetria", "token", TELEMETRY_PARAMS,
+        save_json=True, json_dir=str(tmp_path),
+    )
+
+    assert success is True
+    assert result == items
+    path = (
+        tmp_path / "Telemetria"
+        / "station_12345_2024-05-28_DIAS_30.json"
+    )
+    assert json.loads(path.read_text()) == items
+
+
+def test_telemetry_endpoint_is_registered():
+    from hidrocli.webservices import _DATA_ENDPOINTS_MAP
+
+    assert _DATA_ENDPOINTS_MAP["Telemetria"] == (
+        "/EstacoesTelemetricas/HidroinfoanaSerieTelemetricaDetalhada/v1"
+    )

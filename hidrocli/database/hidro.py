@@ -147,6 +147,30 @@ def get_period(model_name: str, only_code=False, with_null_end_date=False):
     return period_data
 
 
+def get_telemetry_stations(station_codes=None):
+    """Return stations that have an inventory telemetry period.
+
+    Yields ``(Codigo, PeriodoTelemetricaInicio, PeriodoTelemetricaFim)`` rows
+    for stations whose start date is known. When ``station_codes`` is given,
+    only those codes are returned.
+    """
+
+    hidro_session = HIDRO_DB.get_session()
+    query = hidro_session.query(
+        Station.Codigo,
+        Station.PeriodoTelemetricaInicio,
+        Station.PeriodoTelemetricaFim,
+    ).filter(
+        Station.PeriodoTelemetricaInicio.isnot(None),
+    )
+    if station_codes:
+        station_codes = [int(code) for code in station_codes]
+        query = query.filter(Station.Codigo.in_(station_codes))
+    rows = query.all()
+    hidro_session.close()
+    return rows
+
+
 def _create_period_statement(model_name, only_code: bool, with_null_end_date: bool):
     columns = [Station.Codigo]
     start_col, end_col = (

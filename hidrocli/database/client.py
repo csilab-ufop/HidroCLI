@@ -31,7 +31,8 @@ from sqlalchemy.sql              import elements
 from typing import List
 
 from hidrocli.models.client import (
-    ClientBase, Credentials, HidroJob, JobRecords, JobStatus, SeriesJobs, Token,
+    ClientBase, Credentials, HidroJob, JobRecords, JobStatus, SeriesJobs,
+    TelemetryJobs, Token,
 )
 
 CLIENT_DB   = None
@@ -177,9 +178,15 @@ def create_job_filters(job_name: str, status: List[int], last_check: bool,
     if max_retries:
         filters.append(model.Retries < 3)
     if initial_date is not None:
-        filters.append(model.FromDate >= initial_date)
+        if hasattr(model, "FromDate"):
+            filters.append(model.FromDate >= initial_date)
+        elif hasattr(model, "Date"):
+            filters.append(model.Date >= initial_date)
     if final_date is not None:
-        filters.append(model.ToDate <= final_date)
+        if hasattr(model, "ToDate"):
+            filters.append(model.ToDate <= final_date)
+        elif hasattr(model, "Date"):
+            filters.append(model.Date <= final_date)
     if status or last_check:
         sub_filters = []
         if status:
@@ -227,6 +234,55 @@ def get_station_ids(job_name: str, stations=()) -> set:
     station_ids = {row[0] for row in query.distinct()}
     client_session.close()
     return station_ids
+
+
+def get_telemetry_job_keys(job_name: str, station_ids):
+    """Return ``{(StationID, date): (ID, Range)}`` for the given stations."""
+
+    station_ids = list(station_ids)
+    if not station_ids:
+        return {}
+
+    client_session = CLIENT_DB.get_session()
+    try:
+        rows = client_session.query(
+            TelemetryJobs.ID,
+            TelemetryJobs.StationID,
+            TelemetryJobs.Date,
+            TelemetryJobs.Range,
+        ).filter(
+            TelemetryJobs.HidroTable == job_name,
+            TelemetryJobs.StationID.in_(station_ids),
+        ).all()
+    finally:
+        client_session.close()
+
+    return {
+        (station, job_date.date()): (job_id, range_)
+        for job_id, station, job_date, range_ in rows
+    }
+
+
+def get_telemetry_job_bounds(job_name: str, station_ids):
+    """Return ``{StationID: latest Date}`` for the given telemetry stations."""
+
+    station_ids = list(station_ids)
+    if not station_ids:
+        return {}
+
+    client_session = CLIENT_DB.get_session()
+    try:
+        rows = client_session.query(
+            TelemetryJobs.StationID,
+            func.max(TelemetryJobs.Date),
+        ).filter(
+            TelemetryJobs.HidroTable == job_name,
+            TelemetryJobs.StationID.in_(station_ids),
+        ).group_by(TelemetryJobs.StationID).all()
+    finally:
+        client_session.close()
+
+    return {station: latest for station, latest in rows}
 
 
 def insert_jobs(jobs: List[HidroJob]) -> None:

@@ -68,6 +68,17 @@ def upgrade() -> None:
     sa.Column('Status', sa.SmallInteger(), nullable=False),
     sa.PrimaryKeyConstraint('ID')
     )
+    op.create_table('TelemetryJobs',
+    sa.Column('StationID', sa.BigInteger(), nullable=False),
+    sa.Column('Date', sa.DateTime(), nullable=False),
+    sa.Column('Range', sa.String(), nullable=False),
+    sa.Column('Retries', sa.Integer(), nullable=True),
+    sa.Column('ID', sa.Integer(), autoincrement=True, nullable=False),
+    sa.Column('HidroTable', sa.String(), nullable=False),
+    sa.Column('Status', sa.SmallInteger(), nullable=False),
+    sa.PrimaryKeyConstraint('ID'),
+    sa.UniqueConstraint('StationID', 'Date', name='uq_telemetry_job')
+    )
     op.create_table('StationJobs',
     sa.Column('UF', sa.String(), nullable=False),
     sa.Column('LastCheck', sa.DateTime(), nullable=True),
@@ -106,6 +117,7 @@ def downgrade() -> None:
     op.drop_table('JobRecords')
     op.drop_table('Token')
     op.drop_table('StationJobs')
+    op.drop_table('TelemetryJobs')
     op.drop_table('SeriesJobs')
     op.drop_table('Credentials')
     op.drop_table('BaseJobs')

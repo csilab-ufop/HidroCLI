@@ -35,7 +35,7 @@ from enum import StrEnum, auto
 from typing import NamedTuple
 
 from hidrocli.database import (
-    SeriesTables, get_field_names, get_verify_keys,
+    SeriesTables, TelemetryTables, get_field_names, get_verify_keys,
 )
 
 _QUALAGUA_NON_PARAM_ATTRS = {
@@ -83,6 +83,9 @@ JOB_OVERRIDES = {
         "optional_keys": ["ANA_RegistroID"],
         "exclude_attrs": {"DataAlt", "ANA_RegistroID"},
     },
+    "Telemetria": {
+        "exclude_attrs": {"DataAlt"},
+    },
 }
 
 
@@ -116,3 +119,8 @@ def expected_keys(name: str):
 def series_job_names():
     """Return the series job names."""
     return [table.value for table in SeriesTables]
+
+
+def selectable_job_names():
+    """Return every job name accepted by ``--skip-for`` / ``--run-for``."""
+    return series_job_names() + [table.value for table in TelemetryTables]

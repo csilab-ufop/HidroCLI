@@ -477,3 +477,61 @@ def test_update_series_job_windows_updates_overlap_in_database(client_db):
         assert job.Retries  == 0
     finally:
         session.close()
+
+
+def test_get_telemetry_job_keys(client_db):
+    insert_jobs([
+        TelemetryJobs(
+            HidroTable="Telemetria", StationID=1,
+            Date=datetime(2024, 1, 1), Range="DIAS_30",
+            Status=1, Retries=0,
+        ),
+        TelemetryJobs(
+            HidroTable="Telemetria", StationID=2,
+            Date=datetime(2024, 2, 1), Range="DIAS_7",
+            Status=5, Retries=3,
+        ),
+    ])
+
+    result = get_telemetry_job_keys("Telemetria", [1, 2, 3])
+
+    assert set(result) == {
+        (1, datetime(2024, 1, 1).date()),
+        (2, datetime(2024, 2, 1).date()),
+    }
+    assert result[(1, datetime(2024, 1, 1).date())][1] == "DIAS_30"
+    assert result[(2, datetime(2024, 2, 1).date())][1] == "DIAS_7"
+
+
+def test_create_job_filters_uses_telemetry_date_column(client_db):
+    insert_jobs([
+        TelemetryJobs(
+            HidroTable="Telemetria", StationID=1,
+            Date=datetime(2020, 1, 1), Range="DIAS_30", Status=1,
+        ),
+        TelemetryJobs(
+            HidroTable="Telemetria", StationID=1,
+            Date=datetime(2021, 1, 1), Range="DIAS_30", Status=1,
+        ),
+        TelemetryJobs(
+            HidroTable="Telemetria", StationID=2,
+            Date=datetime(2020, 6, 1), Range="DIAS_30", Status=1,
+        ),
+    ])
+
+    filters = create_job_filters(
+        "Telemetria", [1], last_check=False, stations=[1],
+        initial_date=datetime(2019, 1, 1),
+        final_date=datetime(2020, 12, 31),
+    )
+
+    session = client_db.get_session()
+    try:
+        dates = [
+            job.Date
+            for job in session.query(TelemetryJobs).filter(*filters).all()
+        ]
+    finally:
+        session.close()
+
+    assert dates == [datetime(2020, 1, 1)]
