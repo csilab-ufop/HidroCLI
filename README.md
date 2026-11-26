@@ -44,8 +44,8 @@ usage: hidrocli [-h] [--hidro HIDRO] [--client CLIENT]
                 [--max-workers MAX_WORKERS] [--batch-size BATCH_SIZE]
                 [--log-level {TRACE,VERBOSE,DEBUG,INFO,WARNING,ERROR,NONE}]
                 [--skip-series-jobs]
-                [--skip-for [{Chuvas,ResumoDescarga,Sedimentos,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal,Cotas} ...]]
-                [--run-for [{Chuvas,ResumoDescarga,Sedimentos,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal,Cotas} ...]]
+                [--skip-for [{Chuvas,ResumoDescarga,Sedimentos,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal,Cotas,Telemetria} ...]]
+                [--run-for [{Chuvas,ResumoDescarga,Sedimentos,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal,Cotas,Telemetria} ...]]
                 [--stations [STATIONS ...]]
                 [--filter {DATA_LEITURA,DATA_ULTIMA_ATUALIZACAO}]
                 [--initial-date YYYY-MM-DD] [--final-date YYYY-MM-DD]
@@ -63,23 +63,23 @@ options:
                         Database
   --log-level {TRACE,VERBOSE,DEBUG,INFO,WARNING,ERROR,NONE}
                         Set logging level (NONE disables all logging)
-  --skip-series-jobs    Skip all series jobs when present
-  --skip-for [{Chuvas,ResumoDescarga,Sedimentos,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal,Cotas} ...]
+  --skip-series-jobs    Skip all series and telemetry jobs when present
+  --skip-for [{Chuvas,ResumoDescarga,Sedimentos,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal,Cotas,Telemetria} ...]
                         Skip job creation and requesition for the given
                         choices
-  --run-for [{Chuvas,ResumoDescarga,Sedimentos,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal,Cotas} ...]
+  --run-for [{Chuvas,ResumoDescarga,Sedimentos,Vazoes,Granulometria,CurvaDescarga,QualAgua,PerfilTransversal,Cotas,Telemetria} ...]
                         Runs only the choosen Jobs
   --stations [STATIONS ...]
-                        Station codes to filter series jobs
+                        Station codes to filter series and telemetry jobs
   --filter {DATA_LEITURA,DATA_ULTIMA_ATUALIZACAO}
                         Date filter sent to the API (default:
                         DATA_ULTIMA_ATUALIZACAO)
   --initial-date YYYY-MM-DD
-                        Initial date for series jobs; defaults to each station
-                        period start
+                        Initial date for series and telemetry jobs; defaults
+                        to each station period start
   --final-date YYYY-MM-DD
-                        Final date for series jobs; defaults to each station
-                        period end
+                        Final date for series and telemetry jobs; defaults to
+                        each station period end
   --save-json           Save raw JSON payloads retrieved from the API
   --read-json           Read raw JSON payloads from the JSON directory before
                         requesting the API
