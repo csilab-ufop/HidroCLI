@@ -620,23 +620,13 @@ def check_base_job(job_config: JobConfig.Base) -> None:
     filters = create_job_filters(job_config, None, last_check=False)
     if not count_job(job_config, filters):
         _announce(f"Creating jobs for {job_config}.")
-        job_model = get_job_model(job_config)
-        jobs = []
-        match job_config:
-            case JobConfig.Base.STATION:
-                for state in get_states():
-                    job = job_model(
-                        HidroTable = job_config,
-                        Status     = JobConfig.Status.PENDING.value,
-                        UF         = state.Sigla
-                    )
-                    jobs.append(job)
-            case _:
-                job = job_model(
-                    HidroTable = job_config,
-                    Status     = JobConfig.Status.PENDING.value
-                )
-                jobs.append(job)
+        model = get_job_model(job_config)
+        status = JobConfig.Status.PENDING.value
+        if job_config == JobConfig.Base.STATION:
+            jobs = [model(HidroTable=job_config, Status=status,
+                          UF=state.Sigla) for state in get_states()]
+        else:
+            jobs = [model(HidroTable=job_config, Status=status)]
         insert_jobs(jobs)
         check_base_job(job_config)
     else:
