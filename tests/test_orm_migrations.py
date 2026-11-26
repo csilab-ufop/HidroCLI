@@ -9,11 +9,13 @@ from sqlalchemy import (
     Index,
     Integer,
     MetaData,
+    String,
     Table,
     create_engine,
     func,
     inspect,
     select,
+    text,
 )
 
 import hidrocli.database.client as client_database
@@ -84,6 +86,15 @@ def test_upgrade_is_idempotent(tmp_path):
 
     assert runner.current(DbKind.HIDRO, db_path) == BASELINE_REVISION
     assert runner.check(DbKind.HIDRO, db_path) == []
+
+
+def test_upgrade_or_raise_creates_schema(tmp_path):
+    db_path = str(tmp_path / "client.db")
+
+    runner.upgrade_or_raise(db_path, "client")
+
+    assert runner.current(DbKind.CLIENT, db_path) == BASELINE_REVISION
+    assert runner.check(DbKind.CLIENT, db_path) == []
 
 
 def test_upgrade_refuses_legacy_database(tmp_path):
@@ -180,6 +191,38 @@ def test_stamp_rejects_schema_drift(tmp_path):
     assert runner.current(DbKind.CLIENT, db_path) == "unstamped"
 
 
+def test_stamp_rejects_already_stamped_database(tmp_path):
+    db_path = str(tmp_path / "hidro.db")
+    runner.upgrade(DbKind.HIDRO, db_path)
+
+    engine = create_engine(sqlite_url(db_path))
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE alembic_version SET version_num = 'v9.9.9'")
+            )
+    finally:
+        engine.dispose()
+
+    with pytest.raises(runner.MigrationError, match="already stamped at v9.9.9"):
+        runner.stamp(DbKind.HIDRO, db_path)
+
+
+def test_stamp_adopts_empty_version_table(tmp_path):
+    db_path = str(tmp_path / "client.db")
+    engine = create_engine(sqlite_url(db_path))
+    ClientBase.metadata.create_all(engine)
+    Table(
+        "alembic_version",
+        MetaData(),
+        Column("version_num", String(32), primary_key=True),
+    ).create(engine)
+    engine.dispose()
+
+    assert runner.stamp(DbKind.CLIENT, db_path) == BASELINE_REVISION
+    assert runner.current(DbKind.CLIENT, db_path) == BASELINE_REVISION
+
+
 def test_stamp_rejects_empty_database(tmp_path):
     db_path = tmp_path / "client.db"
     Path(db_path).touch()
@@ -207,6 +250,15 @@ def test_current_reports_missing_and_unstamped(tmp_path):
     HidroBase.metadata.create_all(engine)
     engine.dispose()
     assert runner.current(DbKind.HIDRO, unstamped) == "unstamped"
+
+
+def test_history_and_heads_return_baseline():
+    for kind in (DbKind.HIDRO, DbKind.CLIENT):
+        revisions = runner.history(kind)
+
+        assert [revision.revision for revision in revisions] == [BASELINE_REVISION]
+        assert revisions[0].down_revision is None
+        assert runner.heads(kind) == (BASELINE_REVISION,)
 
 
 def test_init_db_creates_both_schemas(tmp_path):
