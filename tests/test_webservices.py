@@ -212,6 +212,41 @@ def test_request_token_all_retries_fail(mock_sleep, mock_request):
     assert mock_sleep.call_count   == 2
 
 
+@pytest.mark.parametrize("status", [429, 500, 504])
+@patch('hidrocli.webservices._request_hidro_ws')
+@patch('hidrocli.webservices.time.sleep')
+def test_request_token_reraises_throttle_error(mock_sleep, mock_request, status):
+    """429/5xx token responses are re-raised immediately without retrying."""
+
+    error = requests.exceptions.HTTPError(
+        f"{status}", response=Mock(status_code=status)
+    )
+    mock_request.side_effect = error
+
+    with pytest.raises(requests.exceptions.HTTPError) as excinfo:
+        request_token("client123", "pass456", max_retries=3, retry_delay=2)
+
+    assert excinfo.value.response.status_code == status
+    assert mock_request.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+@patch('hidrocli.webservices._request_hidro_ws')
+@patch('hidrocli.webservices.time.sleep')
+def test_request_token_keeps_unauthorized_as_failure(mock_sleep, mock_request):
+    """A 401 remains a hard failure; only throttling statuses are re-raised."""
+
+    mock_request.side_effect = requests.exceptions.HTTPError(
+        "401", response=Mock(status_code=401)
+    )
+
+    with pytest.raises(Exception, match="Failed after"):
+        request_token("client123", "pass456", max_retries=3, retry_delay=2)
+
+    assert mock_request.call_count == 3
+    assert mock_sleep.call_count   == 2
+
+
 BASE_JOBS = ["Bacia", "SubBacia", "Entidade", "Municipio", "Rio", "Estado"]
 SERIES_JOBS = ["Chuvas", "ResumoDescarga", "CurvaDescarga", "Sedimentos",
                "QualAgua", "Cotas", "Granulometria", "PerfilTransversal",

@@ -685,6 +685,30 @@ def test_handle_job_request_skips_on_request_error(mock_token, mock_request,
 
 @patch('hidrocli.jobs.runner._throttle')
 @patch('hidrocli.jobs.runner.write_queue')
+@patch('hidrocli.jobs.runner.request_job_data')
+@patch('hidrocli.jobs.runner.get_token', side_effect=_http_error(504))
+def test_handle_job_request_throttles_on_token_server_error(
+        mock_token, mock_request, mock_queue, mock_throttle):
+    """A 5xx during token acquisition throttles and leaves the job PENDING."""
+
+    config = hidrocli.jobs.runner.JobConfig.Telemetry.TELEMETRY
+    job    = MagicMock()
+    job.ID        = 42
+    job.Status    = hidrocli.jobs.runner.JobConfig.Status.PENDING.value
+    job.Retries   = 0
+    job.to_params.return_value = {}
+
+    hidrocli.jobs.runner.handle_job_request(job, config)
+
+    assert job.Status  == hidrocli.jobs.runner.JobConfig.Status.PENDING.value
+    assert job.Retries == 0
+    mock_request.assert_not_called()
+    mock_queue.put.assert_not_called()
+    mock_throttle.assert_called_once()
+
+
+@patch('hidrocli.jobs.runner._throttle')
+@patch('hidrocli.jobs.runner.write_queue')
 @patch('hidrocli.jobs.runner.request_job_data',
        side_effect=ChunkedEncodingError("Response ended prematurely"))
 @patch('hidrocli.jobs.runner.get_token', return_value="token")

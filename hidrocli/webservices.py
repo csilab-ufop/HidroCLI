@@ -106,7 +106,11 @@ def _request_hidro_ws(endpoint, headers, params={}):
         )
 
 def request_token(client_id: str, client_password: str, max_retries=3, retry_delay=2):
-    """ Request an token to ANA API and returns it."""
+    """ Request an token to ANA API and returns it.
+
+    A 429 or 5xx response is re-raised immediately so the caller can throttle
+    the request pool without retrying the token endpoint.
+    """
 
     headers = {
         "accept":        "*/*",
@@ -114,6 +118,7 @@ def request_token(client_id: str, client_password: str, max_retries=3, retry_del
         "Senha":         f"{client_password}",
     }
     endpoint = "/EstacoesTelemetricas/OAUth/v1"
+    last_error = None
     for attempt in range(max_retries):
         try:
             data = _request_hidro_ws(endpoint, headers, {})
@@ -122,10 +127,17 @@ def request_token(client_id: str, client_password: str, max_retries=3, retry_del
             expires_ISOND   = datetime.strptime(expires_RFC2822, "%a %b %d %H:%M:%S GMT-03:00 %Y")
             return [token, expires_ISOND]
         except Exception as e:
-            logger.warning(f"[TOKEN]: (attempt {attempt+1}/{max_retries}): {e}")
+            if isinstance(e, requests.exceptions.HTTPError):
+                response = e.response
+                status = response.status_code if response is not None else None
+                if status == 429 or (status is not None and 500 <= status < 600):
+                    raise
+            last_error = e
+            logger.trace(f"[TOKEN]: (attempt {attempt+1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
                 time.sleep(retry_delay)
-    raise Exception(f"Failed after {max_retries} attempts")
+
+    raise Exception(f"Failed after {max_retries} attempts") from last_error
 
 
 def request_job_data(job_name: str, token: str, params: dict,

@@ -1163,6 +1163,7 @@ def handle_job_request(job: HidroJob, job_config: JobConfig) -> None:
     limiter = _limiter
     try:
         with token_lock:
+            _wait_throttle()  # honor a throttle set while queued for the token
             token = get_token()
         if limiter is not None:
             limiter.acquire()
