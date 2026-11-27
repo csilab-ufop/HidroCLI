@@ -76,28 +76,14 @@ MODULE_TITLES = {
     "hidro database": "Hidro Database",
 }
 
-# Conceptual relationships for the Hidro ER diagram. Relationships are keyed by
-# ``EstacaoCodigo``/``RegistroID``, not database-enforced foreign keys.
-HIDRO_ER = [
-    ("Bacia", "SubBacia", "contains"),
-    ("Bacia", "Rio", "contains"),
-    ("SubBacia", "Rio", "contains"),
+HIDRO_CONCEPTUAL_ER = [
     ("Estado", "Municipio", "contains"),
-    ("Municipio", "Estacao", "locates"),
-    ("Rio", "Estacao", "on"),
-    ("Estacao", "Chuvas", "records"),
-    ("Estacao", "Cotas", "records"),
-    ("Estacao", "Vazoes", "records"),
-    ("Estacao", "ResumoDescarga", "records"),
-    ("Estacao", "Sedimentos", "records"),
-    ("Estacao", "CurvaDescarga", "records"),
-    ("Estacao", "QualAgua", "records"),
-    ("Estacao", "Granulometria", "records"),
-    ("Estacao", "PerfilTransversal", "records"),
-    ("Estacao", "Telemetria", "records"),
-    ("QualAgua", "QualAguaStatus", "status flags"),
-    ("PerfilTransversal", "PerfilTransversalVert", "verticals"),
 ]
+"""Hidro edges that cannot be expressed as database foreign keys.
+
+Series-to-station edges are derived from the `EstacaoCodigo` column instead of
+being listed here. `Estado -> Municipio` has no state-code column.
+"""
 
 CLIENT_CONCEPTUAL_ER = [
     ("BaseJobs", "JobRecords", "produces"),
@@ -842,20 +828,40 @@ def _module_map() -> str:
     return "\n".join(lines)
 
 
-def client_er_relationships():
-    """Return client ER edges from real FKs plus conceptual JobRecords links."""
+def er_relationships(metadata, conceptual):
+    """Return ER edges from metadata foreign keys plus conceptual exceptions."""
 
-    from hidrocli.models.client import ClientBase
-
-    relationships = set(CLIENT_CONCEPTUAL_ER)
-    for table in ClientBase.metadata.tables.values():
+    relationships = set(conceptual)
+    for table in metadata.tables.values():
         for foreign_key in table.foreign_keys:
             relationships.add((
                 foreign_key.column.table.name,
                 table.name,
                 "references",
             ))
+    return relationships
+
+
+def hidro_er_relationships():
+    """Return Hidro ER edges from FKs, series columns, and conceptual exceptions."""
+
+    from hidrocli.models.hidro import HidroBase
+
+    relationships = er_relationships(HidroBase.metadata, HIDRO_CONCEPTUAL_ER)
+    relationships.update(
+        ("Estacao", table.name, "records")
+        for table in HidroBase.metadata.tables.values()
+        if "EstacaoCodigo" in table.columns
+    )
     return sorted(relationships)
+
+
+def client_er_relationships():
+    """Return client ER edges from real FKs plus conceptual JobRecords links."""
+
+    from hidrocli.models.client import ClientBase
+
+    return sorted(er_relationships(ClientBase.metadata, CLIENT_CONCEPTUAL_ER))
 
 
 def _hidro_related(class_name: str) -> list[tuple[str, str]]:
@@ -867,7 +873,7 @@ def _hidro_related(class_name: str) -> list[tuple[str, str]]:
         MODEL_INFO[c][1]: c for c in MODEL_INFO if MODEL_INFO[c][1]
     }
     related: list[tuple[str, str]] = []
-    for source, target, _ in HIDRO_ER:
+    for source, target, _ in hidro_er_relationships():
         if source == table and target in table_to_class:
             related.append((MODEL_INFO[table_to_class[target]][0], hidro_model_filename(table_to_class[target])[:-3]))
         elif target == table and source in table_to_class:
@@ -948,12 +954,13 @@ def build_page(models: list[Model]) -> str:
         "## Relationships",
         "",
     ]
-    lines.extend(er_diagram(HIDRO_ER))
+    lines.extend(er_diagram(hidro_er_relationships()))
     lines.extend(
         [
             "",
-            "Cardinalities are conceptual: relationships are keyed by `EstacaoCodigo` "
-            "and `RegistroID`, not database-enforced foreign keys.",
+            "Foreign-key edges come from the SQLAlchemy models. Enforcement is "
+            "intentionally off; conceptual edges are keyed by `EstacaoCodigo` "
+            "or `RegistroID` where no FK exists.",
             "",
             "## Contents",
             "",
