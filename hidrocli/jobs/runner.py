@@ -611,7 +611,6 @@ def get_token() -> Token.Token:
         _token_cache = get_token_model()
 
     if _token_cache is not None and datetime.now() < _token_cache.Expires:
-        logger.verbose(f"Token is valid. ({_token_cache.Expires})")
         return _token_cache.Token
 
     _announce("No valid token present, requesting.")
@@ -1325,7 +1324,7 @@ def db_writer(interactive=False) -> None:
                                              batch_buffer["data"])
                 total_elapsed += batch_elapsed + insert_elapsed
 
-                logger.trace(f"[TIMER {job_config}]: "
+                logger.verbose(f"[TIMER {job_config}]: "
                              f"batch {batch_elapsed:.2f}s, insert {insert_elapsed:.2f}s")
 
                 batch_buffer["jobs"].clear()
@@ -1442,7 +1441,7 @@ def write_data(job_config: JobConfig, jobs: List[HidroJob], items) -> float:
 
     if jobs:
         update_jobs(jobs, job_config)
-        logger.trace(f"[WRITER {job_config}]: Updated {len(jobs)} jobs")
+        logger.verbose(f"[WRITER {job_config}]: Updated {len(jobs)} jobs")
     return time.perf_counter() - start_time
 
 
