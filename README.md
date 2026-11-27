@@ -7,6 +7,8 @@
 
 A Python application tool to request and sync data from ANA Hidro WebServices.
 
+See [Architecture](https://github.com/csilab-ufop/HidroCLI/wiki/architecture) for the runtime flow, job lifecycle, module map, and client database relationships.
+
 ## Installation
 
 - Requires Python 3.11+ and [sqlite3](https://sqlite.org/index.html).
@@ -59,8 +61,7 @@ options:
   --max-workers MAX_WORKERS
                         Maximum number of worker threads
   --batch-size BATCH_SIZE
-                        Batch size threshold to write job data on Hidro
-                        Database
+                        Jobs fetched per page and write-queue capacity
   --log-level {TRACE,VERBOSE,DEBUG,INFO,WARNING,ERROR,NONE}
                         Set logging level (NONE disables all logging)
   --skip-series-jobs    Skip all series and telemetry jobs when present

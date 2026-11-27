@@ -141,9 +141,39 @@ def test_generate_sidebar_writes_grouped_nav(tmp_path, monkeypatch):
     docs.generate_sidebar()
     text = (tmp_path / "_Sidebar.md").read_text()
     assert "**Hidro Models**" in text
+    assert "[Architecture](architecture)" in text
     assert "[Overview](hidro-models)" in text
     assert "[Bacia](hidro-model-basin)" in text
     assert "[JobRecords](client-model-jobrecords)" in text
+
+
+def test_architecture_page_has_graphs():
+    page = docs.build_architecture_page()
+    assert "flowchart" in page
+    assert "stateDiagram-v2" in page
+    assert "erDiagram" in page
+    assert "Credentials" in page
+    assert "EMPTY" in page
+
+
+def test_discover_module_edges_is_internal_only():
+    nodes, edges = docs.discover_module_edges()
+    assert ("hidrocli.jobs.runner", "hidrocli.webservices") in edges
+    assert ("hidrocli.jobs.runner", "hidrocli.database") in edges
+    assert all(
+        source.startswith(("hidrocli", "hidro_orm"))
+        and target.startswith(("hidrocli", "hidro_orm"))
+        for source, target in edges
+    )
+    assert any(label == "hidrocli.jobs.runner" for _, label in nodes)
+    assert all("build" not in label for _, label in nodes)
+
+
+def test_client_er_relationships_combines_fks_and_concepts():
+    relationships = docs.client_er_relationships()
+    assert ("Credentials", "Token", "references") in relationships
+    assert ("BaseJobs", "JobRecords", "produces") in relationships
+    assert ("TelemetryJobs", "JobRecords", "produces") in relationships
 
 
 def test_generate_footer_writes(tmp_path, monkeypatch):

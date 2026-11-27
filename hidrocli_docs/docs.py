@@ -99,6 +99,105 @@ HIDRO_ER = [
     ("PerfilTransversal", "PerfilTransversalVert", "verticals"),
 ]
 
+CLIENT_CONCEPTUAL_ER = [
+    ("BaseJobs", "JobRecords", "produces"),
+    ("StationJobs", "JobRecords", "produces"),
+    ("SeriesJobs", "JobRecords", "produces"),
+    ("TelemetryJobs", "JobRecords", "produces"),
+]
+
+ARCH_PAGE = """# Application Architecture
+
+HidroCLI is a two-database ETL: it plans work in the client database, fetches ANA
+payloads (live or from the `json/` cache), and writes normalized rows to the
+Hidro database.
+
+## Runtime flow
+
+```mermaid
+flowchart TD
+    CLI["CLI<br/>hidrocli/__main__.py"] --> CONFIG["Config<br/>hidrocli/config.py"]
+    CONFIG --> SETUP["Database setup<br/>Alembic migrations"]
+    SETUP --> JOBS["Job runner<br/>base / series / telemetry"]
+    JOBS -->|"token + requests"| ANA["ANA Hidro WebServices<br/>live API or json/ cache"]
+    ANA -->|"items"| JOBS
+    JOBS -->|"normalize + validate"| QUEUE["Write queue"]
+    QUEUE --> WRITER["Single writer thread<br/>db_writer"]
+    WRITER --> HIDRO[("Hidro DB")]
+    WRITER --> CLIENT[("Client DB")]
+```
+
+The client database also stores credentials, cached tokens, the persistent job
+queues, and `JobRecords` provenance. The Hidro database stores the normalized
+reference and time-series data.
+
+## Job lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING
+    [*] --> CORRUPTED: invalid planning dates
+    PENDING --> COMPLETED: rows written
+    PENDING --> EMPTY: success, no items
+    PENDING --> FAILED: validation or request error
+    PENDING --> INVALID: 417 SQLGrammarException
+    PENDING --> PENDING: timeout / 429 / 5xx / auth
+    FAILED --> PENDING: retry
+    COMPLETED --> PENDING: stale series window
+    EMPTY --> PENDING: stale series window
+    COMPLETED --> [*]
+    EMPTY --> [*]
+    INVALID --> [*]
+    CORRUPTED --> [*]
+```
+
+`FAILED` jobs are retried on later runs while `Retries` is below the limit.
+`EMPTY` means the API succeeded but returned no items. `INVALID` and `CORRUPTED`
+are terminal planning/response failures.
+
+## Module dependency map
+
+Generated from internal imports in `hidrocli/` and `hidro_orm/`; external
+packages and Alembic migrations are omitted.
+
+{module_map}
+
+`hidrocli_docs` is build tooling; it reads the source and wiki, and is not part
+of the runtime path.
+
+## Client database relationships
+
+Real foreign keys from SQLAlchemy metadata plus conceptual `JobRecords` links.
+Only `Token.CredentialID` is database-enforced; `JobRecords.JobID` is a loose
+reference to one of the four job tables.
+
+{client_er}
+
+## Job statuses
+
+| Value | Status | Meaning |
+| :--- | :--- | :--- |
+| `1` | `PENDING` | Waiting to be requested. |
+| `2` | `FAILED` | Request, validation, or write failure; retried while below the retry limit. |
+| `3` | `INVALID` | The API rejected the request; terminal. |
+| `4` | `CORRUPTED` | Invalid planning dates; terminal. |
+| `5` | `COMPLETED` | Rows were written successfully. |
+| `6` | `EMPTY` | The API succeeded but returned no items. |
+
+## Storage layout
+
+| Location | Contents |
+| :--- | :--- |
+| Hidro DB | Normalized reference and time-series tables. |
+| Client DB | Credentials, token, base/station/series/telemetry job queues, and `JobRecords`. |
+| `json/` | Raw ANA payload cache, optionally read with `--read-json` and written with `--save-json`. |
+| `db/` | Default local database paths. |
+
+---
+
+*Generated from `hidrocli_docs/docs.py` by `hidro-docs`.*
+"""
+
 
 def slugify(text: str) -> str:
     """Return a lowercase, hyphen-separated slug for *text*."""
@@ -688,6 +787,85 @@ def er_diagram(relationships: list[tuple[str, str, str]]) -> list[str]:
     return lines
 
 
+def _module_name(path: Path, root: Path) -> str:
+    """Return the dotted module name for a Python file under *root*."""
+
+    parts = list(path.relative_to(root).with_suffix("").parts)
+    if parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
+
+
+def _module_id(name: str) -> str:
+    """Return a Mermaid-safe node identifier for a module name."""
+
+    return "m_" + name.replace(".", "_")
+
+
+def discover_module_edges():
+    """Return module nodes and internal import edges for the application.
+
+    Only ``hidrocli`` and ``hidro_orm`` are scanned, and Alembic migrations are
+    excluded. External imports are ignored.
+    """
+
+    modules = {}
+    for package in ("hidrocli", "hidro_orm"):
+        for path in (ROOT / package).rglob("*.py"):
+            if (
+                "__pycache__" in path.parts
+                or "migrations" in path.parts
+                or "build" in path.parts
+            ):
+                continue
+            modules[_module_name(path, ROOT)] = path
+
+    edges = set()
+    for module, path in modules.items():
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                targets = [node.module] if node.module else []
+            elif isinstance(node, ast.Import):
+                targets = [alias.name for alias in node.names]
+            else:
+                continue
+            for target in targets:
+                if target in modules and target != module:
+                    edges.add((module, target))
+
+    used = {name for edge in edges for name in edge}
+    nodes = [(_module_id(name), name) for name in sorted(used)]
+    return nodes, sorted(edges)
+
+
+def _module_map() -> str:
+    """Render the module dependency graph as a Mermaid block."""
+
+    nodes, edges = discover_module_edges()
+    lines = ["```mermaid", "flowchart LR"]
+    lines.extend(f'    {node_id}["{label}"]' for node_id, label in nodes)
+    lines.extend(f'    {source} --> {target}' for source, target in edges)
+    lines.append("```")
+    return "\n".join(lines)
+
+
+def client_er_relationships():
+    """Return client ER edges from real FKs plus conceptual JobRecords links."""
+
+    from hidrocli.models.client import ClientBase
+
+    relationships = set(CLIENT_CONCEPTUAL_ER)
+    for table in ClientBase.metadata.tables.values():
+        for foreign_key in table.foreign_keys:
+            relationships.add((
+                foreign_key.column.table.name,
+                table.name,
+                "references",
+            ))
+    return sorted(relationships)
+
+
 def _hidro_related(class_name: str) -> list[tuple[str, str]]:
     """Return (title, slug) links for models related to *class_name*."""
     table = MODEL_INFO[class_name][1]
@@ -926,6 +1104,15 @@ def build_client_page(models: list[Model]) -> str:
     return "\n".join(lines)
 
 
+def build_architecture_page() -> str:
+    """Render the application architecture, flow, lifecycle, and module maps."""
+
+    return ARCH_PAGE.format(
+        module_map=_module_map(),
+        client_er="\n".join(er_diagram(client_er_relationships())),
+    )
+
+
 def _remove_stale(directory: Path, prefix: str, keep: set[str]) -> None:
     """Remove per-model pages that no longer match a model class."""
     for path in directory.glob(f"{prefix}*.md"):
@@ -980,12 +1167,23 @@ def generate_client_models_page() -> None:
         _write(WIKI_DIR / client_model_filename(class_name), page)
 
 
+def generate_architecture_page() -> None:
+    """Regenerate the application architecture page."""
+    if not WIKI_DIR.is_dir():
+        raise SystemExit(
+            "wiki directory not found; run "
+            "`git submodule update --init hidrocli_docs/wiki` first"
+        )
+    _write(WIKI_DIR / "architecture.md", build_architecture_page())
+
+
 def generate_sidebar() -> None:
     """Write the GitHub wiki sidebar with grouped, nested navigation."""
     lines = [
         "**Getting started**",
         "",
         "- [Home](Home)",
+        "- [Architecture](architecture)",
         "- [Migration](migration)",
         "- [Use Cases](Use-Cases)",
         "",
@@ -1197,6 +1395,7 @@ def main() -> None:
     polish_module_pages()
     generate_models_page()
     generate_client_models_page()
+    generate_architecture_page()
     generate_sidebar()
     generate_footer()
     copy_assets()
