@@ -31,7 +31,7 @@ import threading
 import time
 
 from datetime import datetime, timedelta
-from queue import Queue
+from queue import Empty, Queue
 
 from requests.exceptions import ChunkedEncodingError, ReadTimeout
 
@@ -459,6 +459,35 @@ def test_db_writer_flushes_per_write_size(monkeypatch, config, size):
         (config, [second_job], [{"ID": 2}]),
         (config, [], []),
     ]
+
+
+def test_db_writer_flushes_partial_batch_when_idle(monkeypatch):
+    """A timeout with buffered rows writes them instead of waiting."""
+
+    config = hidrocli.jobs.runner.JobConfig.Series.RAIN
+    queue = MagicMock()
+    queue.get.side_effect = [
+        _writer_message(config, items=[{"ID": 1}]),
+        Empty(),
+        Empty(),
+        _writer_message(config, stop_signal=True),
+    ]
+    calls = []
+
+    def write(job_config, jobs, items):
+        calls.append((job_config, list(jobs), list(items)))
+        return 0.0
+
+    monkeypatch.setattr(hidrocli.jobs.runner, "write_queue", queue)
+    monkeypatch.setattr(hidrocli.jobs.runner, "write_data", write)
+
+    hidrocli.jobs.runner.db_writer(interactive=True)
+
+    assert calls == [
+        (config, [], [{"ID": 1}]),
+        (config, [], []),
+    ]
+    assert queue.task_done.call_count == 2
 
 
 def test_write_sizes_per_dataset():

@@ -33,7 +33,7 @@ from concurrent.futures import (
     ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED,
 )
 from threading          import Thread, Lock, Condition
-from queue              import Queue
+from queue              import Empty, Queue
 
 from datetime    import datetime, timedelta, date
 from typing      import List, NamedTuple, Optional
@@ -86,6 +86,10 @@ SERIES_RETRY_DEPTH = 3
 
 PROGRESS_INTERVAL = 10.0
 """Seconds between progress lines emitted by the writer thread."""
+
+
+WRITER_IDLE_TIMEOUT = 1.0
+"""Seconds to wait for a result before flushing a partial writer batch."""
 
 
 ADAPTIVE_INITIAL = 8
@@ -1240,6 +1244,9 @@ def db_writer(interactive=False) -> None:
     """ Single Writer Thread running during an Job.
     Consumes an Queue writen by each worker and write data in batches.
 
+    A partial batch is written after ``WRITER_IDLE_TIMEOUT`` seconds without a
+    new result, so a throttle pause does not hold data in memory.
+
     When ``interactive`` is true (a live tqdm bar is active), the writer skips
     the throttled heartbeat and final summary, since the bar reports progress.
     Otherwise (output is redirected) it emits those lines.
@@ -1257,35 +1264,50 @@ def db_writer(interactive=False) -> None:
     last_report = time.monotonic()
     failed      = None
     stop_signal = False
+    job_config  = None
 
     while True:
+        got_item = False
         try:
-            job_config, job, data, worker_time, stop_signal = write_queue.get()
+            try:
+                job_config, job, data, worker_time, stop_signal = (
+                    write_queue.get(timeout=WRITER_IDLE_TIMEOUT)
+                )
+            except Empty:
+                # No results are arriving (for example during a throttle
+                # pause), so write a partial batch instead of holding it.
+                if (failed is not None or job_config is None or
+                        not (batch_buffer["data"] or batch_buffer["jobs"])):
+                    continue
+                flush_at = 0
+            else:
+                got_item = True
 
-            # After a write failure, keep draining so producers do not block
-            # forever on the bounded queue, then stop on the finish signal.
-            if failed is not None:
-                if stop_signal:
-                    break
-                continue
+                # After a write failure, keep draining so producers do not
+                # block forever on the bounded queue, then stop on the finish
+                # signal.
+                if failed is not None:
+                    if stop_signal:
+                        break
+                    continue
 
-            flush_at = WRITE_SIZES.get(job_config, BULK_SIZE)
-            worker_elapsed += worker_time
-            if job:
-                batch_buffer["jobs"].append(job)
-            if data:
-                batch_buffer["data"].extend(data)
-                if batch_start_time is None:
-                    batch_start_time = time.time()
+                flush_at = WRITE_SIZES.get(job_config, BULK_SIZE)
+                worker_elapsed += worker_time
+                if job:
+                    batch_buffer["jobs"].append(job)
+                if data:
+                    batch_buffer["data"].extend(data)
+                    if batch_start_time is None:
+                        batch_start_time = time.time()
 
-            now = time.monotonic()
-            if (not interactive and not stop_signal and
-                    now - last_report >= PROGRESS_INTERVAL):
-                processed_rows = total_data + len(batch_buffer["data"])
-                processed_jobs = total_jobs + len(batch_buffer["jobs"])
-                logger.info(f"[WRITER {job_config}]: "
-                            f"{processed_rows} rows, {processed_jobs} jobs")
-                last_report = now
+                now = time.monotonic()
+                if (not interactive and not stop_signal and
+                        now - last_report >= PROGRESS_INTERVAL):
+                    processed_rows = total_data + len(batch_buffer["data"])
+                    processed_jobs = total_jobs + len(batch_buffer["jobs"])
+                    logger.info(f"[WRITER {job_config}]: "
+                                f"{processed_rows} rows, {processed_jobs} jobs")
+                    last_report = now
 
             if (len(batch_buffer["data"]) >= flush_at or
                 len(batch_buffer["jobs"]) >= flush_at or stop_signal):
@@ -1319,7 +1341,8 @@ def db_writer(interactive=False) -> None:
                 break
 
         finally:
-            write_queue.task_done()
+            if got_item:
+                write_queue.task_done()
 
 
 def _record_provenance(job_config, data_table, items, data_ids=None):
