@@ -64,6 +64,10 @@ def test_client_page_includes_job_records():
 
     page = docs.build_client_page(models)
 
+    assert "## Relationships" in page
+    assert "erDiagram" in page
+    assert "Credentials" in page
+    assert "Token" in page
     assert "JobRecords" in page
 
 
@@ -151,8 +155,7 @@ def test_architecture_page_has_graphs():
     page = docs.build_architecture_page()
     assert "flowchart" in page
     assert "stateDiagram-v2" in page
-    assert "erDiagram" in page
-    assert "Credentials" in page
+    assert "Client database relationships" not in page
     assert "EMPTY" in page
 
 

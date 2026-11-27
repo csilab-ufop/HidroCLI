@@ -165,14 +165,6 @@ packages and Alembic migrations are omitted.
 `hidrocli_docs` is build tooling; it reads the source and wiki, and is not part
 of the runtime path.
 
-## Client database relationships
-
-Real foreign keys from SQLAlchemy metadata plus conceptual `JobRecords` links.
-Only `Token.CredentialID` is database-enforced; `JobRecords.JobID` is a loose
-reference to one of the four job tables.
-
-{client_er}
-
 ## Job statuses
 
 | Value | Status | Meaning |
@@ -1080,11 +1072,20 @@ def build_client_page(models: list[Model]) -> str:
         "",
         "Each model is documented on its own page.",
         "",
+        "## Relationships",
+        "",
+    ]
+    lines.extend(er_diagram(client_er_relationships()))
+    lines.extend([
+        "",
+        "Only `Token.CredentialID` is database-enforced; `JobRecords.JobID` is a "
+        "loose reference to one of the four job tables.",
+        "",
         "## Contents",
         "",
         "**Authentication**",
         "",
-    ]
+    ])
     for class_name, title, _, _ in CLIENT_AUTH:
         lines.append(f"- [{title}]({client_model_filename(class_name)})")
 
@@ -1107,10 +1108,7 @@ def build_client_page(models: list[Model]) -> str:
 def build_architecture_page() -> str:
     """Render the application architecture, flow, lifecycle, and module maps."""
 
-    return ARCH_PAGE.format(
-        module_map=_module_map(),
-        client_er="\n".join(er_diagram(client_er_relationships())),
-    )
+    return ARCH_PAGE.format(module_map=_module_map())
 
 
 def _remove_stale(directory: Path, prefix: str, keep: set[str]) -> None:
