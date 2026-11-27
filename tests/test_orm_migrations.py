@@ -66,13 +66,21 @@ def test_hidro_upgrade_creates_schema(tmp_path):
     assert runner.check(DbKind.HIDRO, db_path) == []
 
 
-def test_hidro_reference_foreign_keys(tmp_path):
+def test_hidro_foreign_keys(tmp_path):
     db_path = str(tmp_path / "hidro.db")
     runner.upgrade(DbKind.HIDRO, db_path)
     engine = create_engine(sqlite_url(db_path))
     try:
         inspector = inspect(engine)
         expected = {
+            table: {("Estacao", "EstacaoCodigo")}
+            for table in (
+                "Chuvas", "Cotas", "CurvaDescarga", "Granulometria",
+                "PerfilTransversal", "QualAgua", "ResumoDescarga",
+                "Sedimentos", "Vazoes", "Telemetria",
+            )
+        }
+        expected.update({
             "SubBacia": {("Bacia", "BaciaCodigo")},
             "Rio": {
                 ("Bacia", "BaciaCodigo"),
@@ -84,7 +92,7 @@ def test_hidro_reference_foreign_keys(tmp_path):
                 ("Rio", "RioCodigo"),
                 ("SubBacia", "SubBaciaCodigo"),
             },
-        }
+        })
         for table, pairs in expected.items():
             actual = {
                 (fk["referred_table"], fk["constrained_columns"][0])
@@ -97,6 +105,11 @@ def test_hidro_reference_foreign_keys(tmp_path):
             for item in inspector.get_unique_constraints("Estado")
         }
         assert ("Sigla",) in unique
+        indexes = {
+            tuple(item["column_names"])
+            for item in inspector.get_indexes("PerfilTransversal")
+        }
+        assert ("EstacaoCodigo",) in indexes
     finally:
         engine.dispose()
 

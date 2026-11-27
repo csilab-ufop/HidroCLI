@@ -133,6 +133,7 @@ def upgrade() -> None:
     sa.Column('RegistroID', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('DataIns', sa.DateTime(), nullable=True),
     sa.Column('DataAlt', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['EstacaoCodigo'], ['Estacao.Codigo']),
     sa.PrimaryKeyConstraint('RegistroID'),
     sa.UniqueConstraint('EstacaoCodigo', 'Data', name='uq_rain')
     )
@@ -217,6 +218,7 @@ def upgrade() -> None:
     sa.Column('RegistroID', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('DataIns', sa.DateTime(), nullable=True),
     sa.Column('DataAlt', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['EstacaoCodigo'], ['Estacao.Codigo']),
     sa.PrimaryKeyConstraint('RegistroID'),
     sa.UniqueConstraint('EstacaoCodigo', 'Data', name='uq_stage')
     )
@@ -241,6 +243,7 @@ def upgrade() -> None:
     sa.Column('RegistroID', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('DataIns', sa.DateTime(), nullable=True),
     sa.Column('DataAlt', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['EstacaoCodigo'], ['Estacao.Codigo']),
     sa.PrimaryKeyConstraint('RegistroID'),
     sa.UniqueConstraint('EstacaoCodigo', 'NumeroCurva', 'PeriodoValidadeInicio', 'PeriodoValidadeFim', name='uq_discharge_flow')
     )
@@ -459,6 +462,7 @@ def upgrade() -> None:
     sa.Column('RegistroID', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('DataIns', sa.DateTime(), nullable=True),
     sa.Column('DataAlt', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['EstacaoCodigo'], ['Estacao.Codigo']),
     sa.PrimaryKeyConstraint('RegistroID'),
     sa.UniqueConstraint('EstacaoCodigo', 'Data', 'HoraInicial', 'HoraFinal', name='uq_granulometry')
     )
@@ -490,6 +494,7 @@ def upgrade() -> None:
     sa.Column('EixoYCotaMinima', sa.Float(), nullable=True),
     sa.Column('ElmGeomPassoCota', sa.Float(), nullable=True),
     sa.Column('Observacoes', sa.String(), nullable=True),
+    sa.ForeignKeyConstraint(['EstacaoCodigo'], ['Estacao.Codigo']),
     sa.PrimaryKeyConstraint('RegistroID'),
     sa.UniqueConstraint('ANA_RegistroID', name='uq_cross_section_ana')
     )
@@ -650,6 +655,7 @@ def upgrade() -> None:
     sa.Column('RegistroID', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('DataIns', sa.DateTime(), nullable=True),
     sa.Column('DataAlt', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['EstacaoCodigo'], ['Estacao.Codigo']),
     sa.PrimaryKeyConstraint('RegistroID'),
     sa.UniqueConstraint('EstacaoCodigo', 'Data', name='uq_qual_agua')
     )
@@ -666,6 +672,7 @@ def upgrade() -> None:
     sa.Column('RegistroID', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('DataIns', sa.DateTime(), nullable=True),
     sa.Column('DataAlt', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['EstacaoCodigo'], ['Estacao.Codigo']),
     sa.PrimaryKeyConstraint('RegistroID'),
     sa.UniqueConstraint('EstacaoCodigo', 'Data', 'DataAlt', 'NivelConsistencia', 'Profundidade', 'AreaMolhada', 'Cota', 'Largura', 'Vazao', 'VelMedia', name='uq_discharge_summary_all_cols')
     )
@@ -704,6 +711,7 @@ def upgrade() -> None:
     sa.Column('RegistroID', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('DataIns', sa.DateTime(), nullable=True),
     sa.Column('DataAlt', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['EstacaoCodigo'], ['Estacao.Codigo']),
     sa.PrimaryKeyConstraint('RegistroID'),
     sa.UniqueConstraint('EstacaoCodigo', 'Data', name='uq_sediments')
     )
@@ -799,6 +807,7 @@ def upgrade() -> None:
     sa.Column('RegistroID', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('DataIns', sa.DateTime(), nullable=True),
     sa.Column('DataAlt', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['EstacaoCodigo'], ['Estacao.Codigo']),
     sa.PrimaryKeyConstraint('RegistroID'),
     sa.UniqueConstraint('EstacaoCodigo', 'Data', name='uq_flow_rate')
     )
@@ -994,9 +1003,11 @@ def upgrade() -> None:
     sa.Column('RegistroID', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('DataIns', sa.DateTime(), nullable=True),
     sa.Column('DataAlt', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['EstacaoCodigo'], ['Estacao.Codigo']),
     sa.PrimaryKeyConstraint('RegistroID'),
     sa.UniqueConstraint('EstacaoCodigo', 'Data_Hora_Medicao', name='uq_telemetry')
     )
+    op.create_index('ix_PerfilTransversal_EstacaoCodigo', 'PerfilTransversal', ['EstacaoCodigo'], unique=False)
     # ### end Alembic commands ###
 
 
@@ -1012,6 +1023,7 @@ def downgrade() -> None:
     op.drop_table('Rio')
     op.drop_table('ResumoDescarga')
     op.drop_table('QualAgua')
+    op.drop_index('ix_PerfilTransversal_EstacaoCodigo', table_name='PerfilTransversal')
     op.drop_table('PerfilTransversal')
     op.drop_table('Municipio')
     op.drop_table('Granulometria')

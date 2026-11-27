@@ -499,7 +499,7 @@ class Rain(HidroBaseModel):
     4 - Accumulated value.
     """
 
-    EstacaoCodigo        = Column(BigInteger, info={"ana": "codigoestacao"})
+    EstacaoCodigo        = Column(BigInteger, ForeignKey("Estacao.Codigo"), info={"ana": "codigoestacao"})
     """int: station code identifier of the record."""
 
     for i in range(1, 32):
@@ -550,7 +550,7 @@ class DischargeMeasurement(HidroBaseModel):
     VelMedia          = Column(Float, info={"ana": "Vel_Media (m/s)"})
     """ float: mean velocity of the measurement (m/s). """
 
-    EstacaoCodigo     = Column(BigInteger, info={"ana": "codigoestacao"})
+    EstacaoCodigo     = Column(BigInteger, ForeignKey("Estacao.Codigo"), info={"ana": "codigoestacao"})
     """int: station code identifier of the record."""
 
 
@@ -619,7 +619,7 @@ class Sediments(HidroBaseModel):
     Velmedia                   = Column(Float, info={"ana": "Vel_Media"})
     """ float: mean velocity of the corresponding liquid discharge measurement (m/s). """
 
-    EstacaoCodigo              = Column(BigInteger, info={"ana": "codigoestacao"})
+    EstacaoCodigo              = Column(BigInteger, ForeignKey("Estacao.Codigo"), info={"ana": "codigoestacao"})
     """int: station code identifier of the record."""
 
 
@@ -703,7 +703,7 @@ class Stage(HidroBaseModel):
     3 - Data logger.
     """
 
-    EstacaoCodigo     = Column(BigInteger, info={"ana": "codigoestacao"})
+    EstacaoCodigo     = Column(BigInteger, ForeignKey("Estacao.Codigo"), info={"ana": "codigoestacao"})
     """int: station code identifier of the record."""
 
     NivelConsistencia = Column(SmallInteger, info={"ana": "nivelconsistencia"})
@@ -801,7 +801,7 @@ class RatingCurve(HidroBaseModel):
     4 - Cubic.
     """
 
-    EstacaoCodigo         = Column(BigInteger, info={"ana": "codigoestacao"})
+    EstacaoCodigo         = Column(BigInteger, ForeignKey("Estacao.Codigo"), info={"ana": "codigoestacao"})
     """int: station code identifier of the record."""
 
 
@@ -1306,7 +1306,7 @@ class WaterQuality(HidroBaseModel):
     Profundidade                = Column(Float, info={"ana": "Profundidade_m"})
     """ float: measurement depth (m). """
 
-    EstacaoCodigo               = Column(BigInteger, info={"ana": "codigoestacao"})
+    EstacaoCodigo               = Column(BigInteger, ForeignKey("Estacao.Codigo"), info={"ana": "codigoestacao"})
     """int: station code identifier of the record."""
 
 
@@ -1352,7 +1352,7 @@ class Granulometry(HidroBaseModel):
         {"info": {"station_period": ('PeriodoSedimentosInicio', 'PeriodoSedimentosFim')}},
     )
 
-    EstacaoCodigo             = Column(BigInteger, info={"ana": "codigoestacao"})
+    EstacaoCodigo             = Column(BigInteger, ForeignKey("Estacao.Codigo"), info={"ana": "codigoestacao"})
     """int: station code identifier of the record."""
 
     NivelConsistencia         = Column(SmallInteger, info={"ana": "Nivel_Consistencia"})
@@ -1719,7 +1719,7 @@ class CrossSection(HidroBaseModel):
     ANA_RegistroID    = Column(Float, info={"ana": "Registro_ID"})
     """ float: ANA record identifier used as the external business key. """
 
-    EstacaoCodigo     = Column(BigInteger, info={"ana": "codigoestacao"})
+    EstacaoCodigo     = Column(BigInteger, ForeignKey("Estacao.Codigo"), index=True, info={"ana": "codigoestacao"})
     """int: station code identifier of the record."""
 
     NivelConsistencia = Column(SmallInteger, info={"ana": "Nivel_Consistencia"})
@@ -1808,7 +1808,7 @@ class FlowRate(HidroBaseModel):
         {"info": {"station_period": ('PeriodoDescLiquidaInicio', 'PeriodoDescLiquidaFim')}},
     )
 
-    EstacaoCodigo        = Column(BigInteger, info={"ana": "codigoestacao"})
+    EstacaoCodigo        = Column(BigInteger, ForeignKey("Estacao.Codigo"), info={"ana": "codigoestacao"})
     """int: station code identifier of the record."""
 
     NivelConsistencia    = Column(SmallInteger, info={"ana": "Nivel_Consistencia"})
@@ -1908,7 +1908,7 @@ class Telemetry(HidroBaseModel):
         ),
     )
 
-    EstacaoCodigo              = Column(BigInteger, info={"ana": "codigoestacao"})
+    EstacaoCodigo              = Column(BigInteger, ForeignKey("Estacao.Codigo"), info={"ana": "codigoestacao"})
     """int: station code identifier of the record."""
 
     Data_Hora_Medicao          = Column(DateTime, info={"ana": "Data_Hora_Medicao"})
