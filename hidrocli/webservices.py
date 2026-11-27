@@ -66,7 +66,7 @@ def _request_hidro_ws(endpoint, headers, params={}):
     url = "https://www.ana.gov.br/hidrowebservice"
     logger.verbose(f"[REQUEST]: Endpoint: {endpoint}\nHeaders: {headers}\nParams: {params}")
     try:
-        response = requests.get(f"{url}{endpoint}", headers=headers, params=params, timeout=300)
+        response = requests.get(f"{url}{endpoint}", headers=headers, params=params, timeout=(10, 120))
     except requests.exceptions.RequestException as e:
         if isinstance(e, requests.exceptions.Timeout):
             logger.verbose(

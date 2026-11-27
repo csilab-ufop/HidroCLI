@@ -56,7 +56,7 @@ def test_request_hidro_ws_success(mock_get):
         "https://www.ana.gov.br/hidrowebservice/endpoint",
         headers={"Authorization": "Bearer token"},
         params={},
-        timeout=300
+        timeout=(10, 120)
     )
 
 
