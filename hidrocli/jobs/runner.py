@@ -73,7 +73,7 @@ CONFIG: Config = Config()
 
 
 BULK_SIZE = 5000
-"""Minimum jobs or rows accumulated before one bulk write.
+"""Minimum jobs accumulated before one bulk job insert.
 
 Independent of ``--batch-size`` (which bounds the scheduling page and queue):
 a larger batch means fewer SQLite commits without hydrating more jobs.
@@ -191,8 +191,25 @@ class QueueData(NamedTuple):
     stop_signal: bool
 
 
+WRITE_SIZES = (
+    dict.fromkeys(JobConfig.Base, 1)
+    | dict.fromkeys(JobConfig.Series, 5_000)
+    | {
+        JobConfig.Series.DISCHARGE_FLOW:   10_000,
+        JobConfig.Series.DISCHARGE_SUMMARY: 8_000,
+        JobConfig.Series.SEDIMENTS:        10_000,
+        JobConfig.Telemetry.TELEMETRY:     20_000,
+    }
+)
+"""Rows buffered per dataset before one writer commit.
+
+Base jobs use 1, so every response is written immediately. Series values keep
+each write near the SQLite throughput knee while bounding the buffer.
+"""
+
+
 def _batch_size() -> int:
-    """Return the configured write/job chunk size, with a safe default."""
+    """Return the configured job page size, with a safe default."""
 
     return max(1, CONFIG.BATCH_SIZE)
 
@@ -1238,8 +1255,8 @@ def db_writer(interactive=False) -> None:
     batch_elapsed  = 0
     batch_start_time = None
     last_report = time.monotonic()
-    flush_at    = max(CONFIG.BATCH_SIZE, BULK_SIZE)
     failed      = None
+    stop_signal = False
 
     while True:
         try:
@@ -1252,6 +1269,7 @@ def db_writer(interactive=False) -> None:
                     break
                 continue
 
+            flush_at = WRITE_SIZES.get(job_config, BULK_SIZE)
             worker_elapsed += worker_time
             if job:
                 batch_buffer["jobs"].append(job)
@@ -1297,6 +1315,8 @@ def db_writer(interactive=False) -> None:
         except Exception as e:
             failed = e
             logger.error(f"[WRITER]: db_writer exception: {e}")
+            if stop_signal:
+                break
 
         finally:
             write_queue.task_done()

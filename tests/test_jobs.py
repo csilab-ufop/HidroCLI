@@ -27,6 +27,7 @@ from unittest.mock import patch, MagicMock
 
 import io
 import logging
+import threading
 import time
 
 from datetime import datetime, timedelta
@@ -436,10 +437,15 @@ def test_db_writer_flushes_batched_jobs_and_data(monkeypatch):
     assert calls == [(config, [job], [first, second])]
 
 
-def test_db_writer_flushes_at_bulk_threshold(monkeypatch):
-    config = hidrocli.jobs.runner.JobConfig.Series.RAIN
-    _set_config(monkeypatch, BATCH_SIZE=1)
-    monkeypatch.setattr(hidrocli.jobs.runner, "BULK_SIZE", 1)
+@pytest.mark.parametrize("config, size", [
+    (hidrocli.jobs.runner.JobConfig.Base.STATION, None),
+    (hidrocli.jobs.runner.JobConfig.Series.RAIN, 1),
+])
+def test_db_writer_flushes_per_write_size(monkeypatch, config, size):
+    """Base jobs flush each response; a reached threshold flushes too."""
+
+    if size is not None:
+        monkeypatch.setitem(hidrocli.jobs.runner.WRITE_SIZES, config, size)
     first_job, second_job = MagicMock(), MagicMock()
 
     calls = _drain_writer(monkeypatch, [
@@ -453,6 +459,17 @@ def test_db_writer_flushes_at_bulk_threshold(monkeypatch):
         (config, [second_job], [{"ID": 2}]),
         (config, [], []),
     ]
+
+
+def test_write_sizes_per_dataset():
+    sizes = hidrocli.jobs.runner.WRITE_SIZES
+    config = hidrocli.jobs.runner.JobConfig
+    assert sizes[config.Base.STATION] == 1
+    assert sizes[config.Series.RAIN] == 5_000
+    assert sizes[config.Series.DISCHARGE_FLOW] == 10_000
+    assert sizes[config.Series.DISCHARGE_SUMMARY] == 8_000
+    assert sizes[config.Series.SEDIMENTS] == 10_000
+    assert sizes[config.Telemetry.TELEMETRY] == 20_000
 
 
 def test_db_writer_non_interactive_logs_progress_and_summary(
@@ -498,8 +515,7 @@ def test_db_writer_interactive_skips_progress_logs(monkeypatch, caplog):
 def test_db_writer_drains_after_write_failure(monkeypatch, caplog):
     caplog.set_level(logging.ERROR, logger="hidrocli.jobs.runner")
     config = hidrocli.jobs.runner.JobConfig.Series.RAIN
-    _set_config(monkeypatch, BATCH_SIZE=1)
-    monkeypatch.setattr(hidrocli.jobs.runner, "BULK_SIZE", 1)
+    monkeypatch.setitem(hidrocli.jobs.runner.WRITE_SIZES, config, 1)
     attempts = []
 
     def broken_write(job_config, jobs, items):
@@ -517,6 +533,34 @@ def test_db_writer_drains_after_write_failure(monkeypatch, caplog):
     )
 
     assert calls == []
+    assert attempts == [(config, [], [{"ID": 1}])]
+    assert "disk full" in caplog.text
+
+
+def test_db_writer_exits_when_final_flush_fails(monkeypatch, caplog):
+    """A failed stop-signal write must end the writer instead of blocking."""
+
+    caplog.set_level(logging.ERROR, logger="hidrocli.jobs.runner")
+    config = hidrocli.jobs.runner.JobConfig.Series.RAIN
+    attempts = []
+
+    def broken_write(job_config, jobs, items):
+        attempts.append((job_config, list(jobs), list(items)))
+        raise RuntimeError("disk full")
+
+    queue = Queue()
+    queue.put(_writer_message(config, items=[{"ID": 1}]))
+    queue.put(_writer_message(config, stop_signal=True))
+    monkeypatch.setattr(hidrocli.jobs.runner, "write_queue", queue)
+    monkeypatch.setattr(hidrocli.jobs.runner, "write_data", broken_write)
+
+    worker = threading.Thread(
+        target=hidrocli.jobs.runner.db_writer, daemon=True
+    )
+    worker.start()
+    worker.join(timeout=2)
+
+    assert not worker.is_alive()
     assert attempts == [(config, [], [{"ID": 1}])]
     assert "disk full" in caplog.text
 

@@ -94,7 +94,7 @@ def parse_config(argv=None):
     parser.add_argument('--max-workers', type=int, default=10, help='Maximum number of worker threads')
 
     parser.add_argument('--batch-size',  type=int, default=1000,
-                        help='Batch size threshold to write job data on Hidro Database')
+                        help='Jobs fetched per page and write-queue capacity')
 
     parser.add_argument('--log-level', default='INFO',
                         choices=['TRACE', 'VERBOSE', 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'NONE'],
