@@ -470,9 +470,11 @@ def upgrade() -> None:
     sa.Column('Nome', sa.String(), nullable=True),
     sa.Column('Codigo', sa.Integer(), nullable=True),
     sa.Column('CodigoIBGE', sa.Integer(), nullable=True),
+    sa.Column('EstadoCodigo', sa.Integer(), nullable=True),
     sa.Column('RegistroID', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('DataIns', sa.DateTime(), nullable=True),
     sa.Column('DataAlt', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['EstadoCodigo'], ['Estado.Codigo']),
     sa.PrimaryKeyConstraint('RegistroID'),
     sa.UniqueConstraint('Codigo')
     )

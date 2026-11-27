@@ -92,6 +92,7 @@ def test_hidro_foreign_keys(tmp_path):
                 ("Rio", "RioCodigo"),
                 ("SubBacia", "SubBaciaCodigo"),
             },
+            "Municipio": {("Estado", "EstadoCodigo")},
         })
         for table, pairs in expected.items():
             actual = {

@@ -129,6 +129,9 @@ class Township(HidroBaseModel):
     CodigoIBGE = Column(Integer, info={"ana": "Municipio_Codigo_IBGE"})
     """int: identifier of the town based on IBGE."""
 
+    EstadoCodigo = Column(Integer, ForeignKey("Estado.Codigo"), info={"ana": "Estado_Codigo"})
+    """int: identifier of the state which the town belongs to."""
+
 
 
 class River(HidroBaseModel):
