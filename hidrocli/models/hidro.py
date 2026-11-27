@@ -94,7 +94,7 @@ class SubBasin(HidroBaseModel):
     Codigo      = Column(Integer, unique=True, info={"ana": "codigosubbacia"})
     """int: unique identifier of hydrographic sub-basin."""
 
-    BaciaCodigo = Column(Integer, info={"ana": "Bacia_Codigo"})
+    BaciaCodigo = Column(Integer, ForeignKey("Bacia.Codigo"), info={"ana": "Bacia_Codigo"})
     """int: identifier of which basin the given sub-basin belongs."""
 
 
@@ -150,10 +150,10 @@ class River(HidroBaseModel):
     3 - Undefined
     """
 
-    BaciaCodigo       = Column(Integer, info={"ana": "Bacia_Codigo"})
+    BaciaCodigo       = Column(Integer, ForeignKey("Bacia.Codigo"), info={"ana": "Bacia_Codigo"})
     """int: identifier of which basin the given river belongs."""
 
-    SubBaciaCodigo    = Column(Integer, info={"ana": "Sub_Bacia_Codigo"})
+    SubBaciaCodigo    = Column(Integer, ForeignKey("SubBacia.Codigo"), info={"ana": "Sub_Bacia_Codigo"})
     """int: identifier of which sub-basin the given river belongs."""
 
 
@@ -166,7 +166,7 @@ class State(HidroBaseModel):
     Nome       = Column(String, info={"ana": "Estado_Nome"})
     """string: name of the state."""
 
-    Sigla      = Column(String, info={"ana": "Estado_Sigla"})
+    Sigla      = Column(String, unique=True, info={"ana": "Estado_Sigla"})
     """string: acronym of the state."""
 
     Codigo     = Column(Integer, unique=True, info={"ana": "codigouf"})
@@ -272,10 +272,10 @@ class Station(HidroBaseModel):
     Longitude                     = Column(Float, info={"ana": "Longitude"})
     """float: longitude of the station."""
 
-    MunicipioCodigo               = Column(Integer, info={"ana": "Municipio_Codigo"})
+    MunicipioCodigo               = Column(Integer, ForeignKey("Municipio.Codigo"), info={"ana": "Municipio_Codigo"})
     """int: identifier of the town which the station is located."""
 
-    EstadoSigla                  = Column(String, info={"ana": "UF_Estacao"})
+    EstadoSigla                  = Column(String, ForeignKey("Estado.Sigla"), info={"ana": "UF_Estacao"})
     """ string: acronym of the state where the station is located. """
 
     OperadoraCodigo               = Column(BigInteger, info={"ana": "Operadora_Codigo"})
@@ -293,10 +293,10 @@ class Station(HidroBaseModel):
     ResponsavelUnidade            = Column(Integer, info={"ana": "Responsavel_Unidade_UF"})
     """int: identifier of the unity which belongs the station. """
 
-    RioCodigo                     = Column(BigInteger, info={"ana": "Rio_Codigo"})
+    RioCodigo                     = Column(BigInteger, ForeignKey("Rio.Codigo"), info={"ana": "Rio_Codigo"})
     """int: identifier of the river where is the station."""
 
-    SubBaciaCodigo                = Column(BigInteger, info={"ana": "Sub_Bacia_Codigo"})
+    SubBaciaCodigo                = Column(BigInteger, ForeignKey("SubBacia.Codigo"), info={"ana": "Sub_Bacia_Codigo"})
     """int: identifier of the sub-basin where is the station."""
 
     TipoEstacaoClimatologica      = Column(SmallInteger, info={"ana": "Tipo_Estacao_Climatologica"})

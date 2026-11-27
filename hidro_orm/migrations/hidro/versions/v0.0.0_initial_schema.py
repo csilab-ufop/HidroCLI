@@ -320,6 +320,10 @@ def upgrade() -> None:
     sa.Column('RegistroID', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('DataIns', sa.DateTime(), nullable=True),
     sa.Column('DataAlt', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['MunicipioCodigo'], ['Municipio.Codigo']),
+    sa.ForeignKeyConstraint(['EstadoSigla'], ['Estado.Sigla']),
+    sa.ForeignKeyConstraint(['RioCodigo'], ['Rio.Codigo']),
+    sa.ForeignKeyConstraint(['SubBaciaCodigo'], ['SubBacia.Codigo']),
     sa.PrimaryKeyConstraint('RegistroID'),
     sa.UniqueConstraint('Codigo')
     )
@@ -332,7 +336,8 @@ def upgrade() -> None:
     sa.Column('DataIns', sa.DateTime(), nullable=True),
     sa.Column('DataAlt', sa.DateTime(), nullable=True),
     sa.PrimaryKeyConstraint('RegistroID'),
-    sa.UniqueConstraint('Codigo')
+    sa.UniqueConstraint('Codigo'),
+    sa.UniqueConstraint('Sigla')
     )
     op.create_table('Granulometria',
     sa.Column('EstacaoCodigo', sa.BigInteger(), nullable=True),
@@ -673,6 +678,8 @@ def upgrade() -> None:
     sa.Column('RegistroID', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('DataIns', sa.DateTime(), nullable=True),
     sa.Column('DataAlt', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['BaciaCodigo'], ['Bacia.Codigo']),
+    sa.ForeignKeyConstraint(['SubBaciaCodigo'], ['SubBacia.Codigo']),
     sa.PrimaryKeyConstraint('RegistroID'),
     sa.UniqueConstraint('Codigo')
     )
@@ -707,6 +714,7 @@ def upgrade() -> None:
     sa.Column('RegistroID', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('DataIns', sa.DateTime(), nullable=True),
     sa.Column('DataAlt', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['BaciaCodigo'], ['Bacia.Codigo']),
     sa.PrimaryKeyConstraint('RegistroID'),
     sa.UniqueConstraint('Codigo')
     )
