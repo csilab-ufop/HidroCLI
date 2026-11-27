@@ -32,7 +32,7 @@ import time
 from datetime import datetime, timedelta
 from queue import Queue
 
-from requests.exceptions import ReadTimeout
+from requests.exceptions import ChunkedEncodingError, ReadTimeout
 
 import hidrocli.jobs.runner
 from hidrocli.config import setup_logger
@@ -681,6 +681,30 @@ def test_handle_job_request_skips_on_request_error(mock_token, mock_request,
     assert job.Status  == hidrocli.jobs.runner.JobConfig.Status.PENDING.value
     assert job.Retries == 0
     mock_queue.put.assert_not_called()
+
+
+@patch('hidrocli.jobs.runner._throttle')
+@patch('hidrocli.jobs.runner.write_queue')
+@patch('hidrocli.jobs.runner.request_job_data',
+       side_effect=ChunkedEncodingError("Response ended prematurely"))
+@patch('hidrocli.jobs.runner.get_token', return_value="token")
+def test_handle_job_request_skips_chunked_encoding_without_throttle(
+        mock_token, mock_request, mock_queue, mock_throttle):
+    """A truncated response leaves the job PENDING without throttling."""
+
+    config = hidrocli.jobs.runner.JobConfig.Telemetry.TELEMETRY
+    job    = MagicMock()
+    job.ID        = 42
+    job.Status    = hidrocli.jobs.runner.JobConfig.Status.PENDING.value
+    job.Retries   = 0
+    job.to_params.return_value = {}
+
+    hidrocli.jobs.runner.handle_job_request(job, config)
+
+    assert job.Status  == hidrocli.jobs.runner.JobConfig.Status.PENDING.value
+    assert job.Retries == 0
+    mock_queue.put.assert_not_called()
+    mock_throttle.assert_not_called()
 
 
 @patch('hidrocli.jobs.runner._throttle')

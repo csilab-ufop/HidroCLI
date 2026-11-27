@@ -116,6 +116,27 @@ def test_request_hidro_ws_connection_error_raises(mock_get):
         _request_hidro_ws("/endpoint", {})
 
 
+@pytest.mark.parametrize("error", [
+    requests.exceptions.ChunkedEncodingError("Response ended prematurely"),
+    requests.exceptions.ContentDecodingError("Failed to decode response content"),
+])
+@patch('hidrocli.webservices.logger')
+@patch('hidrocli.webservices.requests.get')
+def test_request_hidro_ws_body_errors_log_trace(mock_get, mock_logger, error):
+    """Premature or undecodable bodies are transient transport conditions."""
+
+    mock_get.side_effect = error
+
+    with pytest.raises(type(error)):
+        _request_hidro_ws("/endpoint", {})
+
+    assert any(
+        type(error).__name__ in str(call)
+        for call in mock_logger.trace.call_args_list
+    )
+    mock_logger.error.assert_not_called()
+
+
 @patch('hidrocli.webservices.requests.get')
 def test_request_hidro_ws_json_exception(mock_get):
     """Test handling of JSON decode error on successful response."""

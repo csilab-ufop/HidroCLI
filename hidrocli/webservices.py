@@ -74,7 +74,9 @@ def _request_hidro_ws(endpoint, headers, params={}):
                 f"params: {params}: {e}"
             )
         elif isinstance(e, (requests.exceptions.SSLError,
-                            requests.exceptions.ConnectionError)):
+                            requests.exceptions.ConnectionError,
+                            requests.exceptions.ChunkedEncodingError,
+                            requests.exceptions.ContentDecodingError)):
             logger.trace(
                 f"[REQUEST]: {type(e).__name__} for {endpoint}, "
                 f"params: {params}: {e}"
