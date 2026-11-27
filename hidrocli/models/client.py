@@ -46,6 +46,7 @@ class JobStatus(Enum):
     INVALID   = 3
     CORRUPTED = 4
     COMPLETED = 5
+    EMPTY     = 6
 
 
 class BaseTables(StrEnum):
@@ -142,6 +143,7 @@ class HidroJob(ClientBase):
     3 - Invalid.
     4 - Corrupted.
     5 - Completed.
+    6 - Empty.
     """
 
     def __iter__(self):

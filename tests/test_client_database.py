@@ -239,6 +239,7 @@ def test_create_job_filters_scopes_selected_stations(client_db):
         BaseJobs(HidroTable="Entidade",  Status=3),
         BaseJobs(HidroTable="Municipio", Status=4),
         BaseJobs(HidroTable="Rio",       Status=5),
+        BaseJobs(HidroTable="Estado",    Status=6),
     ]),
 ])
 def test_count_jobs_by_status(client_db, job_type, jobs, request):

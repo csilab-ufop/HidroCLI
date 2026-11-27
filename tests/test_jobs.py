@@ -388,6 +388,32 @@ def test_trigger_job_read_json_shows_static_workers(
         assert call.kwargs["errors"] == 0
 
 
+@patch('hidrocli.jobs.runner.count_job_by_status', return_value=[(5, 2), (6, 1)])
+@patch('hidrocli.jobs.runner.write_queue')
+@patch('hidrocli.jobs.runner.db_writer')
+@patch('hidrocli.jobs.runner.handle_job_request')
+@patch('hidrocli.jobs.runner.iter_jobs', return_value=iter([]))
+@patch('hidrocli.jobs.runner._make_progress_bar')
+def test_trigger_job_summary_includes_empty(
+        mock_bar, mock_iter, mock_handle, mock_writer, mock_queue, mock_count,
+        monkeypatch):
+    bar = mock_bar.return_value
+    bar.disable = True
+    bar.format_dict = {"n": 0, "total": 0, "elapsed": 0, "rate": None}
+    messages = []
+    monkeypatch.setattr(
+        hidrocli.jobs.runner, "_announce",
+        lambda message, idle=False: messages.append(message),
+    )
+    _set_config(monkeypatch, MAX_WORKERS=1, BATCH_SIZE=5, READ_JSON=True)
+
+    hidrocli.jobs.runner.trigger_job(
+        hidrocli.jobs.runner.JobConfig.Series.RAIN, [], 0
+    )
+
+    assert any("Completed: 2, Empty: 1" in message for message in messages)
+
+
 def _writer_message(job_config, *, job=None, items=None, worker_time=0.0,
                     stop_signal=False):
     """Build one queue item consumed by the writer thread."""
@@ -668,6 +694,60 @@ def test_handle_job_request_passes_json_flags(
         "json_dir":  "custom/json",
         "read_json": read_json,
     }
+
+
+@pytest.mark.parametrize("config", [
+    hidrocli.jobs.runner.JobConfig.Base.BASIN,
+    hidrocli.jobs.runner.JobConfig.Series.RAIN,
+    hidrocli.jobs.runner.JobConfig.Telemetry.TELEMETRY,
+])
+@pytest.mark.parametrize("items", [[], {}])
+@patch('hidrocli.jobs.runner.write_queue')
+@patch('hidrocli.jobs.runner.request_job_data')
+@patch('hidrocli.jobs.runner.get_token', return_value="token")
+def test_handle_job_request_marks_empty(mock_token, mock_request, mock_queue,
+                                        config, items):
+    """A successful response without items marks the job EMPTY."""
+
+    mock_request.return_value = (True, items)
+    job = MagicMock()
+    job.ID        = 42
+    job.Status    = hidrocli.jobs.runner.JobConfig.Status.PENDING.value
+    job.Retries   = 0
+    job.to_params.return_value = {}
+
+    hidrocli.jobs.runner.handle_job_request(job, config)
+
+    assert job.Status  == hidrocli.jobs.runner.JobConfig.Status.EMPTY.value
+    assert job.Retries == 0
+    if isinstance(config, hidrocli.jobs.runner.JobConfig.Base):
+        assert isinstance(job.LastCheck, datetime)
+    queued = mock_queue.put.call_args.args[0]
+    assert queued.items == []
+    assert queued.job.Status == hidrocli.jobs.runner.JobConfig.Status.EMPTY.value
+
+
+@patch('hidrocli.jobs.runner.write_queue')
+@patch('hidrocli.jobs.runner.request_job_data', return_value=(True, [{}]))
+@patch('hidrocli.jobs.runner.get_token', return_value="token")
+def test_handle_job_request_keeps_invalid_payload_failed(
+        mock_token, mock_request, mock_queue):
+    """Non-empty payloads that fail validation are not reclassified as EMPTY."""
+
+    config = hidrocli.jobs.runner.JobConfig.Series.GRANULOMETRY
+    job = MagicMock()
+    job.ID        = 42
+    job.Status    = hidrocli.jobs.runner.JobConfig.Status.PENDING.value
+    job.Retries   = 0
+    job.to_params.return_value = {}
+
+    hidrocli.jobs.runner.handle_job_request(job, config)
+
+    assert job.Status  == hidrocli.jobs.runner.JobConfig.Status.FAILED.value
+    assert job.Retries == 1
+    queued = mock_queue.put.call_args.args[0]
+    assert queued.items == []
+    assert queued.job.Status == hidrocli.jobs.runner.JobConfig.Status.FAILED.value
 
 
 @patch('hidrocli.jobs.runner.write_queue')

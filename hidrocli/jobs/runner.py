@@ -1065,11 +1065,11 @@ def trigger_job(job_config: JobConfig, filters, total: int) -> None:
     write_queue.put(finish_queue)
     writer.join()
 
-    status_map = {1: "Pending", 2: "Failed", 3: "Invalid", 5: "Completed"}
+    status_map = {status.value: status.name.title() for status in JobStatus}
     counts = {status_map.get(s, f"Unknown({s})"): c for s, c in count_job_by_status(job_config)}
     summary = ", ".join(
         f"{key}: {counts.get(key, 0)}"
-        for key in ("Pending", "Failed", "Invalid", "Completed")
+        for key in ("Pending", "Failed", "Invalid", "Completed", "Empty")
     )
 
     refresh_stats(limiter)
@@ -1153,17 +1153,22 @@ def _handle_http_error(job: HidroJob, job_config: JobConfig, e) -> bool:
 
 
 def _process_success(job: HidroJob, job_config: JobConfig, items):
-    """Normalize and validate fetched items, marking the job COMPLETED."""
+    """Normalize and validate fetched items, marking the job COMPLETED or EMPTY."""
 
     try:
-        items = normalize_items(str(job_config), items)
+        items = normalize_items(str(job_config), items or [])
+        if not items:
+            job.Status = JobConfig.Status.EMPTY.value
+            if isinstance(job_config, JobConfig.Base):
+                job.LastCheck = datetime.now()
+            return items
+
         job.Status = JobConfig.Status.COMPLETED.value
         match job_config:
             case JobConfig.Base():
                 job.LastCheck = datetime.now()
             case JobConfig.Series() | JobConfig.Telemetry():
-                if items:
-                    items = validate_series_items(job, job_config, items)
+                items = validate_series_items(job, job_config, items)
                 if items and isinstance(job_config, JobConfig.Series):
                     items = validate_series_items_date(job, job_config, items)
     except Exception as e:
