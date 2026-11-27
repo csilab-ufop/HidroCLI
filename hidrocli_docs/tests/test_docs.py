@@ -179,14 +179,14 @@ def test_client_er_relationships_combines_fks_and_concepts():
     assert ("TelemetryJobs", "JobRecords", "produces") in relationships
 
 
-def test_hidro_er_relationships_combines_fks_and_concepts():
+def test_hidro_er_relationships():
     relationships = docs.hidro_er_relationships()
     assert ("Municipio", "Estacao", "references") in relationships
     assert ("Estado", "Estacao", "references") in relationships
     assert ("SubBacia", "Rio", "references") in relationships
     assert ("Estacao", "Chuvas", "references") in relationships
     assert ("Estacao", "Telemetria", "references") in relationships
-    assert ("Estado", "Municipio", "contains") in relationships
+    assert ("Estado", "Municipio", "references") in relationships
 
 
 def test_generate_footer_writes(tmp_path, monkeypatch):

@@ -819,10 +819,10 @@ def _module_map() -> str:
     return "\n".join(lines)
 
 
-def er_relationships(metadata, conceptual):
-    """Return ER edges from metadata foreign keys plus conceptual exceptions."""
+def fk_relationships(metadata):
+    """Return ER edges from metadata foreign keys."""
 
-    relationships = set(conceptual)
+    relationships = set()
     for table in metadata.tables.values():
         for foreign_key in table.foreign_keys:
             relationships.add((
@@ -834,14 +834,11 @@ def er_relationships(metadata, conceptual):
 
 
 def hidro_er_relationships():
-    """Return Hidro ER edges from FKs plus the Estado -> Municipio exception."""
+    """Return Hidro ER edges from foreign keys."""
 
     from hidrocli.models.hidro import HidroBase
 
-    return sorted(er_relationships(
-        HidroBase.metadata,
-        [("Estado", "Municipio", "contains")],
-    ))
+    return sorted(fk_relationships(HidroBase.metadata))
 
 
 def client_er_relationships():
@@ -849,7 +846,7 @@ def client_er_relationships():
 
     from hidrocli.models.client import ClientBase
 
-    return sorted(er_relationships(ClientBase.metadata, CLIENT_CONCEPTUAL_ER))
+    return sorted(fk_relationships(ClientBase.metadata) | set(CLIENT_CONCEPTUAL_ER))
 
 
 def _hidro_related(class_name: str) -> list[tuple[str, str]]:
@@ -947,8 +944,7 @@ def build_page(models: list[Model]) -> str:
         [
             "",
             "Foreign-key edges come from the SQLAlchemy models. Enforcement is "
-            "intentionally off; conceptual edges are keyed by `EstacaoCodigo` "
-            "or `RegistroID` where no FK exists.",
+            "intentionally off.",
             "",
             "## Contents",
             "",
