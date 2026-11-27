@@ -56,6 +56,9 @@ class DatabaseConnection:
         self.Session = sessionmaker(bind=self.engine)
         self.type    = db_type
 
+        from hidrocli.database.diagnostics import install_database_hooks
+        install_database_hooks(self.engine, db_type.value)
+
     def get_session(self) -> Session:
         return self.Session()
     def close(self):
@@ -81,6 +84,11 @@ def _setup_db(db_path, db_type) -> DatabaseConnection:
     except Exception:
         db.close()
         raise
+
+    from hidrocli.database.diagnostics import log_database_diagnostics
+    from hidro_orm.schema import DbKind
+
+    log_database_diagnostics(DbKind(db_type.value.lower()), db_path, db)
 
     return db
 

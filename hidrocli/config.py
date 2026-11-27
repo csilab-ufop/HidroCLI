@@ -184,6 +184,7 @@ def setup_logger(config: Config = Config()):
         level=level,
         handlers=[handler]
     )
+    logging.captureWarnings(True)
 
 
 class _TqdmLoggingHandler(logging.StreamHandler):
