@@ -76,15 +76,6 @@ MODULE_TITLES = {
     "hidro database": "Hidro Database",
 }
 
-HIDRO_CONCEPTUAL_ER = [
-    ("Estado", "Municipio", "contains"),
-]
-"""Hidro edges that cannot be expressed as database foreign keys.
-
-Series-to-station edges are derived from the `EstacaoCodigo` column instead of
-being listed here. `Estado -> Municipio` has no state-code column.
-"""
-
 CLIENT_CONCEPTUAL_ER = [
     ("BaseJobs", "JobRecords", "produces"),
     ("StationJobs", "JobRecords", "produces"),
@@ -843,17 +834,14 @@ def er_relationships(metadata, conceptual):
 
 
 def hidro_er_relationships():
-    """Return Hidro ER edges from FKs, series columns, and conceptual exceptions."""
+    """Return Hidro ER edges from FKs plus the Estado -> Municipio exception."""
 
     from hidrocli.models.hidro import HidroBase
 
-    relationships = er_relationships(HidroBase.metadata, HIDRO_CONCEPTUAL_ER)
-    relationships.update(
-        ("Estacao", table.name, "records")
-        for table in HidroBase.metadata.tables.values()
-        if "EstacaoCodigo" in table.columns
-    )
-    return sorted(relationships)
+    return sorted(er_relationships(
+        HidroBase.metadata,
+        [("Estado", "Municipio", "contains")],
+    ))
 
 
 def client_er_relationships():

@@ -184,7 +184,8 @@ def test_hidro_er_relationships_combines_fks_and_concepts():
     assert ("Municipio", "Estacao", "references") in relationships
     assert ("Estado", "Estacao", "references") in relationships
     assert ("SubBacia", "Rio", "references") in relationships
-    assert ("Estacao", "Chuvas", "records") in relationships
+    assert ("Estacao", "Chuvas", "references") in relationships
+    assert ("Estacao", "Telemetria", "references") in relationships
     assert ("Estado", "Municipio", "contains") in relationships
 
 
